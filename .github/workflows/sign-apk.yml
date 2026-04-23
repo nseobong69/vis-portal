@@ -1,0 +1,57 @@
+name: Sign APK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  sign:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up JDK
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Generate Keystore
+        run: |
+          keytool -genkeypair \
+            -v \
+            -keystore vis.keystore \
+            -alias vis \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -storepass vis123456 \
+            -keypass vis123456 \
+            -dname "CN=VIS,O=VIS,C=NG" \
+            -noprompt
+
+      - name: Align and Sign APK
+        run: |
+          BUILD_TOOLS=$(ls $ANDROID_SDK_ROOT/build-tools/ | sort -V | tail -1)
+          ZIPALIGN=$ANDROID_SDK_ROOT/build-tools/$BUILD_TOOLS/zipalign
+          APKSIGNER=$ANDROID_SDK_ROOT/build-tools/$BUILD_TOOLS/apksigner
+
+          $ZIPALIGN -v -p 4 "VIS Portal-unsigned.apk" vis-aligned.apk
+
+          $APKSIGNER sign \
+            --ks vis.keystore \
+            --ks-pass pass:vis123456 \
+            --key-pass pass:vis123456 \
+            --ks-key-alias vis \
+            --out VIS-Portal-signed.apk \
+            vis-aligned.apk
+
+          $APKSIGNER verify VIS-Portal-signed.apk
+
+      - name: Upload Signed APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: VIS-Portal-Signed
+          path: VIS-Portal-signed.apk
