@@ -3039,13 +3039,13 @@ async function downloadResultPDF(){
   if(!card){toast('Result not loaded.','error');return;}
   toast('Generating PDF…');
   try{
-    const canvas=await html2canvas(card,{scale:0.75,useCORS:true,logging:false});
+    const canvas=await html2canvas(card,{scale:1.8,useCORS:true,logging:false});
     const pdf=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
     const W=pdf.internal.pageSize.getWidth(),H=pdf.internal.pageSize.getHeight();
     const imgH=(canvas.height*W)/canvas.width;
     let fW=W,fH=imgH,fx=0,fy=0;
     if(imgH>H){fH=H;fW=(canvas.width*H)/canvas.height;fx=(W-fW)/2;}
-    pdf.addImage(canvas.toDataURL('image/jpeg',0.25),'JPEG',fx,fy,fW,fH);
+    pdf.addImage(canvas.toDataURL('image/jpeg',0.78),'JPEG',fx,fy,fW,fH);
     const blob=pdf.output('blob');
     // Save locally
     pdf.save(`VIS_Result_${UP?.admission_number||'student'}_${document.getElementById('mr-term')?.value||''}.pdf`);
@@ -3235,12 +3235,12 @@ async function generateCombinedPDF(){
       await new Promise(r=>setTimeout(r,350));
 
       const canvas=await html2canvas(tempDiv,{
-        scale:0.75,useCORS:true,logging:false,width:794,allowTaint:false
+        scale:1.8,useCORS:true,logging:false,width:794,allowTaint:false
       });
       const cImgH=(canvas.height*W)/canvas.width;
       let cW=W,cH=cImgH,cx=0,cy=0;
       if(cImgH>H){cH=H;cW=(canvas.width*H)/canvas.height;cx=(W-cW)/2;}
-      const imgData=canvas.toDataURL('image/jpeg',0.22);
+      const imgData=canvas.toDataURL('image/jpeg',0.78);
       if(si>0) pdf.addPage();
       pdf.addImage(imgData,'JPEG',cx,cy,cW,cH);
 
