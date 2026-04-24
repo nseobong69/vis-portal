@@ -3039,13 +3039,13 @@ async function downloadResultPDF(){
   if(!card){toast('Result not loaded.','error');return;}
   toast('Generating PDF…');
   try{
-    const canvas=await html2canvas(card,{scale:1.8,useCORS:true,logging:false});
+    const canvas=await html2canvas(card,{scale:2.2,useCORS:true,logging:false});
     const pdf=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
     const W=pdf.internal.pageSize.getWidth(),H=pdf.internal.pageSize.getHeight();
     const imgH=(canvas.height*W)/canvas.width;
     let fW=W,fH=imgH,fx=0,fy=0;
     if(imgH>H){fH=H;fW=(canvas.width*H)/canvas.height;fx=(W-fW)/2;}
-    pdf.addImage(canvas.toDataURL('image/jpeg',0.78),'JPEG',fx,fy,fW,fH);
+    pdf.addImage(canvas.toDataURL('image/jpeg',0.88),'JPEG',fx,fy,fW,fH);
     const blob=pdf.output('blob');
     // Save locally
     pdf.save(`VIS_Result_${UP?.admission_number||'student'}_${document.getElementById('mr-term')?.value||''}.pdf`);
@@ -3235,12 +3235,12 @@ async function generateCombinedPDF(){
       await new Promise(r=>setTimeout(r,350));
 
       const canvas=await html2canvas(tempDiv,{
-        scale:1.8,useCORS:true,logging:false,width:794,allowTaint:false
+        scale:2.2,useCORS:true,logging:false,width:794,allowTaint:false
       });
       const cImgH=(canvas.height*W)/canvas.width;
       let cW=W,cH=cImgH,cx=0,cy=0;
       if(cImgH>H){cH=H;cW=(canvas.width*H)/canvas.height;cx=(W-cW)/2;}
-      const imgData=canvas.toDataURL('image/jpeg',0.78);
+      const imgData=canvas.toDataURL('image/jpeg',0.88);
       if(si>0) pdf.addPage();
       pdf.addImage(imgData,'JPEG',cx,cy,cW,cH);
 
@@ -5090,7 +5090,7 @@ async function exportAttPDF(){
   if(!el){toast('No report to export.','error');return;}
   try{
     const{jsPDF}=window.jspdf;
-    const canvas=await html2canvas(el,{scale:1.4,useCORS:true,logging:false,width:el.scrollWidth});
+    const canvas=await html2canvas(el,{scale:2.0,useCORS:true,logging:false,width:el.scrollWidth});
     const pdf=new jsPDF({orientation:'landscape',unit:'mm',format:'a3'});
     const W=pdf.internal.pageSize.getWidth(),H=pdf.internal.pageSize.getHeight();
     const ratio=canvas.width/canvas.height;
@@ -5494,7 +5494,6 @@ async function saveInvoices(printAfter=false){
       fee_type:       ftype,
       amount:         famt,
       amount_paid:    paid||null,
-      balance:        bal,
       status,
       payment_method: paid>0 ? 'Cash' : null,
       approved_by:    paid>0 ? (UP?.full_name||null) : null,
@@ -5621,8 +5620,8 @@ async function renderFinance(){
             </label>
           </div>
         </div>
-        <div style="overflow-x:auto;">
-          <table class="tbl">
+        <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;">
+          <table class="tbl" style="min-width:900px;">
             <thead><tr>
               <th style="width:32px;"><input type="checkbox" id="fin-hdr-chk" onchange="finToggleAll(this.checked)"></th>
               <th>Student</th><th>Class</th><th>Fee Type</th><th>Term</th>
@@ -5710,7 +5709,11 @@ function _renderFinTable(rows){
     const due=parseFloat(p.amount)||0;
     const paid=parseFloat(p.amount_paid||0)||0;
     const bal=due-paid;
-    let badge='';
+    const balDisplay=bal<0
+      ? `<span style="color:#16A34A;font-weight:700;">+${fmtMoney(Math.abs(bal))}</span>`
+      : bal===0
+        ? '<span style="color:#16A34A;">₦0 ✅</span>'
+        : `<span style="color:#EF4444;font-weight:700;">-${fmtMoney(bal)}</span>`;
     if(p.status==='paid') badge='<span class="badge bg"><i class="fas fa-check"></i> Full Paid</span>';
     else if(p.status==='partial') badge=`<span class="badge bo"><i class="fas fa-adjust"></i> Part Paid</span>`;
     else badge='<span class="badge br-b"><i class="fas fa-times"></i> Unpaid</span>';
@@ -5725,7 +5728,7 @@ function _renderFinTable(rows){
       <td style="font-weight:700;">${fmtMoney(due)}</td>
       <td style="font-size:12px;">${payMethod==='Paystack'?'<span style="color:#0DA152;font-weight:600;"><i class="fas fa-lock"></i> Online</span>':payMethod==='Cash'?'<span style="color:var(--br);"><i class="fas fa-money-bill"></i> Cash</span>':payMethod}</td>
       <td style="font-weight:700;color:#16A34A;">${fmtMoney(paid)}</td>
-      <td style="font-weight:700;color:${balColor};">${bal<=0?'<span style="color:#16A34A;">₦0 ✅</span>':fmtMoney(bal)}</td>
+      <td style="font-weight:700;">${balDisplay}</td>
       <td>${badge}</td>
       <td style="font-size:12px;color:var(--brl);">${p.approved_by||'—'}</td>
       <td style="color:var(--brl);font-size:12px;">${fmtDate(p.created_at)}</td>
@@ -8651,10 +8654,10 @@ async function downloadScoreSheetPDF(cn,subj,term,sess){
   const card=document.getElementById('score-sheet-card');
   if(!card){toast('Preview not loaded.','error');return;}
   toast('Generating PDF…');
-  const canvas=await html2canvas(card,{scale:1.4,useCORS:true,logging:false});
+  const canvas=await html2canvas(card,{scale:2.0,useCORS:true,logging:false});
   const pdf=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
   const w=pdf.internal.pageSize.getWidth();
-  pdf.addImage(canvas.toDataURL('image/jpeg',0.75),'PNG',0,0,w,(canvas.height*w)/canvas.width);
+  pdf.addImage(canvas.toDataURL('image/jpeg',0.82),'PNG',0,0,w,(canvas.height*w)/canvas.width);
   pdf.save(`Score_Sheet_Body_${cn}_${subj}_${term}_${sess}.pdf`);
   toast('✅ Score Sheet downloaded!');
 }
@@ -8750,12 +8753,12 @@ async function downloadMarkSheetPDF(cn,term,sess){
   const wrap=document.getElementById('mark-sheet-wrap');
   if(!wrap){toast('Generate preview first.','error');return;}
   toast('Generating PDF…');
-  const canvas=await html2canvas(wrap,{scale:1.5,useCORS:true,logging:false,width:wrap.scrollWidth});
+  const canvas=await html2canvas(wrap,{scale:2.0,useCORS:true,logging:false,width:wrap.scrollWidth});
   const pdf=new jsPDF({orientation:'landscape',unit:'mm',format:'a3'});
   const W=pdf.internal.pageSize.getWidth(),H=pdf.internal.pageSize.getHeight();
   const ratio=canvas.width/canvas.height;
   const imgH=W/ratio;
-  if(imgH<=H) pdf.addImage(canvas.toDataURL('image/jpeg',0.75),'PNG',0,0,W,imgH);
+  if(imgH<=H) pdf.addImage(canvas.toDataURL('image/jpeg',0.82),'PNG',0,0,W,imgH);
   else {
     let y=0;
     while(y<canvas.height){
@@ -12123,7 +12126,7 @@ async function hubLoadSSPreview(){
 async function hubDownloadSSPDF(subj,term,sess){
   const card=document.getElementById('hub-ss-card');if(!card){toast('Preview first.','error');return;}
   toast('Generating PDF…');
-  const canvas=await html2canvas(card,{scale:1.5,useCORS:true,logging:false});
+  const canvas=await html2canvas(card,{scale:2.0,useCORS:true,logging:false});
   const{jsPDF}=window.jspdf;
   const pdf=new jsPDF({orientation:'landscape',unit:'mm',format:'a4'});
   const W=pdf.internal.pageSize.getWidth(),H=pdf.internal.pageSize.getHeight();
@@ -12205,11 +12208,11 @@ async function hubLoadMarkSheet(){
 async function hubDownloadMKPDF(term,sess){
   const wrap=document.getElementById('hub-mk-wrap');if(!wrap){toast('Generate first.','error');return;}
   toast('Generating PDF…');
-  const canvas=await html2canvas(wrap,{scale:1.5,useCORS:true,logging:false,width:wrap.scrollWidth});
+  const canvas=await html2canvas(wrap,{scale:2.0,useCORS:true,logging:false,width:wrap.scrollWidth});
   const{jsPDF}=window.jspdf;const pdf=new jsPDF({orientation:'landscape',unit:'mm',format:'a3'});
   const W=pdf.internal.pageSize.getWidth(),H=pdf.internal.pageSize.getHeight();
   const ratio=canvas.width/canvas.height;const imgH=W/ratio;
-  if(imgH<=H){pdf.addImage(canvas.toDataURL('image/jpeg',0.75),'JPEG',0,0,W,imgH);}
+  if(imgH<=H){pdf.addImage(canvas.toDataURL('image/jpeg',0.82),'JPEG',0,0,W,imgH);}
   else{let y=0;while(y<canvas.height){const sh=Math.floor(canvas.width*H/W);const c=document.createElement('canvas');c.width=canvas.width;c.height=Math.min(sh,canvas.height-y);c.getContext('2d').drawImage(canvas,0,-y);if(y>0)pdf.addPage();pdf.addImage(c.toDataURL('image/jpeg',0.75),'JPEG',0,0,W,c.height*W/c.width);y+=sh;}}
   pdf.save(`MarkSheet_${_hubCname}_${term}_${sess}.pdf`);toast('✅ Mark Sheet downloaded!');
 }
