@@ -5479,7 +5479,7 @@ async function saveInvoices(printAfter=false){
   const btn=document.getElementById('inv-save-btn');
   if(btn){ btn.innerHTML='<span class="spinner"></span> Saving…'; btn.disabled=true; }
 
-  let saved=0, errors=0;
+  let saved=0, errors=0, lastErr='';
   const savedIds=[];
 
   for(const row of checked){
@@ -5519,7 +5519,7 @@ async function saveInvoices(printAfter=false){
       .eq('session', sess)
       .eq('fee_type', ftype)
       .limit(1);
-    if(exErr){ errors++; console.error('Fee lookup:',exErr.message); continue; }
+    if(exErr){ errors++; console.error('Fee lookup:',exErr.message); lastErr=exErr.message; continue; }
 
     let error;
     if(ex?.length){
@@ -5530,10 +5530,10 @@ async function saveInvoices(printAfter=false){
       error=res.error;
       if(!error&&res.data?.length) savedIds.push(res.data[0].id);
     }
-    if(error){ errors++; console.error('Invoice save:',error.message,error.details||''); } else saved++;
+    if(error){ errors++; lastErr=error.message; console.error('Invoice save:',error.message,error.details||''); } else saved++;
   }
 
-  if(errors) toast(`⚠️ ${saved} saved, ${errors} failed.`,'error');
+  if(errors) toast(`⚠️ ${saved} saved, ${errors} failed. ${lastErr?'Error: '+lastErr:''}`,'error');
   else       toast(`✅ ${saved} invoice${saved!==1?'s':''} created!`);
 
   closeModal();
@@ -6227,7 +6227,7 @@ async function saveBulkCashPayments(){
       if(error) errors++;else saved++;
     }
   }
-  if(errors) toast(`⚠️ ${saved} saved, ${errors} failed.`,'error');
+  if(errors) toast(`⚠️ ${saved} saved, ${errors} failed. ${lastErr?'Error: '+lastErr:''}`,'error');
   else toast(`✅ ${saved} payment(s) recorded!`);
   closeModal();
   await loadFinanceTable();
