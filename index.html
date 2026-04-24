@@ -5776,8 +5776,11 @@ async function _loadLogoDataUrl(logoUrl){
         const w=Math.max(1,Math.round(img.naturalWidth*ratio));
         const h=Math.max(1,Math.round(img.naturalHeight*ratio));
         const c=document.createElement('canvas');c.width=w;c.height=h;
-        c.getContext('2d').drawImage(img,0,0,w,h);
-        res(c.toDataURL('image/jpeg',0.4));
+        const ctx=c.getContext('2d');
+        const isPNG=logoUrl.toLowerCase().includes('.png')||logoUrl.startsWith('data:image/png');
+        if(!isPNG){ctx.fillStyle='#ffffff';ctx.fillRect(0,0,w,h);}
+        ctx.drawImage(img,0,0,w,h);
+        res(isPNG?c.toDataURL('image/png'):c.toDataURL('image/jpeg',0.4));
       };
       img.onerror=()=>res(null);
       img.src=logoUrl;
@@ -5897,7 +5900,7 @@ async function _genFeePDFFromRow(p,type){
   pdf.setDrawColor(130,110,100);pdf.setLineWidth(0.25);
   // Left signature — School Director / Finance signatory
   if(finSigImg){
-    try{const si=await _loadLogoDataUrl(finSigImg);if(si)pdf.addImage(si,'JPEG',18,y,44,10);}catch(e){}
+    try{const si=await _loadLogoDataUrl(finSigImg);if(si)pdf.addImage(si,'',18,y,44,10);}catch(e){}
   }
   pdf.line(18,y+12,78,y+12);
   pdf.setFontSize(6.5);pdf.setTextColor(80,55,45);pdf.setFont('helvetica','bold');
@@ -5906,7 +5909,7 @@ async function _genFeePDFFromRow(p,type){
   pdf.text(finSigRole,48,y+22,{align:'center'});
   // Right stamp — School Director stamp
   if(finStampImg){
-    try{const si=await _loadLogoDataUrl(finStampImg);if(si)pdf.addImage(si,'JPEG',W-62,y,40,30);}catch(e){
+    try{const si=await _loadLogoDataUrl(finStampImg);if(si)pdf.addImage(si,'',W-62,y,40,30);}catch(e){
       pdf.setLineDashPattern([1.5,1.5],0);pdf.rect(W-64,y-1,46,28,'S');pdf.setLineDashPattern([],0);
       pdf.text('OFFICIAL STAMP',W-41,y+10,{align:'center'});
     }
@@ -7371,11 +7374,15 @@ async function _compressTo40KB(blob){
       URL.revokeObjectURL(url);
       const canvas=document.createElement('canvas');
       let quality=0.82, scale=1.0;
+      const isPNG=blob.type==='image/png';
+      const outFmt=isPNG?'image/png':'image/jpeg';
       const tryEncode=()=>{
         const w=Math.max(1,Math.round(img.naturalWidth*scale));
         const h=Math.max(1,Math.round(img.naturalHeight*scale));
         canvas.width=w; canvas.height=h;
-        canvas.getContext('2d').drawImage(img,0,0,w,h);
+        const ctx=canvas.getContext('2d');
+        if(!isPNG){ctx.fillStyle='#ffffff';ctx.fillRect(0,0,w,h);}
+        ctx.drawImage(img,0,0,w,h);
         canvas.toBlob(b=>{
           if(!b){resolve(blob);return;}
           if(b.size<=MAX||quality<=0.08){resolve(b);}
@@ -7384,7 +7391,7 @@ async function _compressTo40KB(blob){
             else scale=Math.max(0.2,scale-0.12);
             tryEncode();
           }
-        },'image/jpeg',quality);
+        },outFmt,isPNG?undefined:quality);
       };
       tryEncode();
     };
@@ -9829,14 +9836,14 @@ async function viewAdmissionDetail(id){
 async function showInternalAdmForm(){
   const{data:classes}=await DB().from('classes').select('id,name,arm,level').order('name');
   const ss=SCHOOL_SETTINGS||{};
-  _admIsPublic=false;_admCurrent=0;modal(buildAdmFormHTML(classes||[],ss,false),'760px');
+  modal(buildAdmFormHTML(classes||[],ss,false),'760px');
 }
 
 function showAdmissionPublic(){
   const ss=SCHOOL_SETTINGS||{};
   (async()=>{
     const{data:classes}=await DB().from('classes').select('id,name,arm,level').order('name');
-    _admIsPublic=true;_admCurrent=0;modal(buildAdmFormHTML(classes||[],ss,true),'760px');
+    modal(buildAdmFormHTML(classes||[],ss,true),'760px');
   })();
 }
 
@@ -10052,7 +10059,6 @@ function buildAdmFormHTML(classes,ss,isPublic){
 
 // Admission form navigation
 let _admCurrent=0;
-let _admIsPublic=false;
 function admNext(current){
   if(current===0){const n=document.getElementById('adm-name')?.value.trim();const c=document.getElementById('adm-cls')?.value;if(!n||!c){toast('Full name and class are required.','error');return;}}
   if(current===4){const p=document.getElementById('adm-par')?.value.trim();const ph=document.getElementById('adm-phn')?.value.trim();if(!p||!ph){toast('Parent name and phone are required.','error');return;}}
@@ -10060,7 +10066,7 @@ function admNext(current){
   // Payment required to proceed
   const paySection=document.getElementById('adm-sec-5');
   const payMethodEl=document.getElementById('adm-pay-method-pub');
-  if(_admIsPublic && payMethodEl){
+  if(isPublic && payMethodEl){
     const method=payMethodEl.value;
     if(!method){toast('Please select a payment method to proceed.','error');return;}
     if(method==='cash'){
@@ -10694,7 +10700,7 @@ async function generateAdmissionPDF(adm, isOnline=false){
 async function loadImageForPDF(url){
   return new Promise((res,rej)=>{
     const img=new Image();img.crossOrigin='anonymous';
-    img.onload=()=>{const c=document.createElement('canvas');c.width=img.width;c.height=img.height;c.getContext('2d').drawImage(img,0,0);res(c.toDataURL('image/jpeg',0.75));};
+    img.onload=()=>{const c=document.createElement('canvas');c.width=img.width;c.height=img.height;const ctx=c.getContext('2d');const isPNG=url.toLowerCase().includes('.png')||url.startsWith('data:image/png');if(!isPNG){ctx.fillStyle='#ffffff';ctx.fillRect(0,0,c.width,c.height);}ctx.drawImage(img,0,0);res(isPNG?c.toDataURL('image/png'):c.toDataURL('image/jpeg',0.75));};
     img.onerror=rej;img.src=url;
   });
                                                                         }
