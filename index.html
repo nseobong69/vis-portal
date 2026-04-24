@@ -433,8 +433,8 @@ body.exam-active *{-webkit-user-select:none;user-select:none;}
 // ═══════════════════════════════════════════
 // CONFIG
 // ═══════════════════════════════════════════
-const SB_URL  = 'https://femhgdpgryzreyyxqlrk.supabase.co';
-const SB_KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZlbWhnZHBncnl6cmV5eXhxbHJrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY5NDU1NjgsImV4cCI6MjA5MjUyMTU2OH0.u570DJyRbq2_W_GvyRhCdtCtUdSJCkOAs-KLDM0MJdI';
+const SB_URL  = 'https://hdqsbzfmubanhtpppxey.supabase.co';
+const SB_KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhkcXNiemZtdWJhbmh0cHBweGV5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU4OTQ5MTEsImV4cCI6MjA5MTQ3MDkxMX0.7wjB1BzA0xUqBuRzBi3bFOH7c5Qdp1AjNmhJmulsYcU';
 // Paystack keys - loaded from school_settings
 let PS_PUBLIC_KEY = 'pk_test_139efea9627103c42cabcc713682dce1bfa7135c';
 let PS_SECRET_KEY = 'sk_test_95be8d3087b164b087542928c320b959211c3aae';
@@ -7371,11 +7371,15 @@ async function _compressTo40KB(blob){
       URL.revokeObjectURL(url);
       const canvas=document.createElement('canvas');
       let quality=0.82, scale=1.0;
+      const isPNG=blob.type==='image/png';
+      const outFmt=isPNG?'image/png':'image/jpeg';
       const tryEncode=()=>{
         const w=Math.max(1,Math.round(img.naturalWidth*scale));
         const h=Math.max(1,Math.round(img.naturalHeight*scale));
         canvas.width=w; canvas.height=h;
-        canvas.getContext('2d').drawImage(img,0,0,w,h);
+        const ctx=canvas.getContext('2d');
+        if(!isPNG){ctx.fillStyle='#ffffff';ctx.fillRect(0,0,w,h);}
+        ctx.drawImage(img,0,0,w,h);
         canvas.toBlob(b=>{
           if(!b){resolve(blob);return;}
           if(b.size<=MAX||quality<=0.08){resolve(b);}
@@ -7384,7 +7388,7 @@ async function _compressTo40KB(blob){
             else scale=Math.max(0.2,scale-0.12);
             tryEncode();
           }
-        },'image/jpeg',quality);
+        },outFmt,isPNG?undefined:quality);
       };
       tryEncode();
     };
@@ -9311,7 +9315,7 @@ async function sendEmailViaGmail({toEmail,toName,subject,body,role}){
     reply_email: SCHOOL_SETTINGS.reply_email||SCHOOL_SETTINGS.email||VIS_EMAIL
   });
 }
-const VIS_EMAIL='victoriousinternationalschs@gmail.com';
+const VIS_EMAIL='visintlschsportal@gmail.com';
 async function sendEmailDelivery({toEmail,toName,subject,bodyHtml,message}){
   const schoolName=SCHOOL_SETTINGS?.school_name||'Victorious International Schools';
   // Log attempt (no file refs — emails contain only OTP/information)
@@ -10727,7 +10731,7 @@ async function retryEmail(logId){
 // ═══════════════════════════════════════════
 // EMAIL CENTER (Full Compose + Send System)
 // ═══════════════════════════════════════════
-const SMTP_EMAIL='victoriousinternationalschs@gmail.com';
+const SMTP_EMAIL='visintlschsportal@gmail.com';
 // ── sendEmailViaGmail defined above (EmailJS engine with script auto-loader) ──
 
 async function renderEmailCenter(){
