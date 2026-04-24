@@ -7371,15 +7371,11 @@ async function _compressTo40KB(blob){
       URL.revokeObjectURL(url);
       const canvas=document.createElement('canvas');
       let quality=0.82, scale=1.0;
-      const isPNG=blob.type==='image/png';
-      const outFmt=isPNG?'image/png':'image/jpeg';
       const tryEncode=()=>{
         const w=Math.max(1,Math.round(img.naturalWidth*scale));
         const h=Math.max(1,Math.round(img.naturalHeight*scale));
         canvas.width=w; canvas.height=h;
-        const ctx=canvas.getContext('2d');
-        if(!isPNG){ctx.fillStyle='#ffffff';ctx.fillRect(0,0,w,h);}
-        ctx.drawImage(img,0,0,w,h);
+        canvas.getContext('2d').drawImage(img,0,0,w,h);
         canvas.toBlob(b=>{
           if(!b){resolve(blob);return;}
           if(b.size<=MAX||quality<=0.08){resolve(b);}
@@ -7388,7 +7384,7 @@ async function _compressTo40KB(blob){
             else scale=Math.max(0.2,scale-0.12);
             tryEncode();
           }
-        },outFmt,isPNG?undefined:quality);
+        },'image/jpeg',quality);
       };
       tryEncode();
     };
@@ -9833,14 +9829,14 @@ async function viewAdmissionDetail(id){
 async function showInternalAdmForm(){
   const{data:classes}=await DB().from('classes').select('id,name,arm,level').order('name');
   const ss=SCHOOL_SETTINGS||{};
-  modal(buildAdmFormHTML(classes||[],ss,false),'760px');
+  _admIsPublic=false;_admCurrent=0;modal(buildAdmFormHTML(classes||[],ss,false),'760px');
 }
 
 function showAdmissionPublic(){
   const ss=SCHOOL_SETTINGS||{};
   (async()=>{
     const{data:classes}=await DB().from('classes').select('id,name,arm,level').order('name');
-    modal(buildAdmFormHTML(classes||[],ss,true),'760px');
+    _admIsPublic=true;_admCurrent=0;modal(buildAdmFormHTML(classes||[],ss,true),'760px');
   })();
 }
 
@@ -10056,6 +10052,7 @@ function buildAdmFormHTML(classes,ss,isPublic){
 
 // Admission form navigation
 let _admCurrent=0;
+let _admIsPublic=false;
 function admNext(current){
   if(current===0){const n=document.getElementById('adm-name')?.value.trim();const c=document.getElementById('adm-cls')?.value;if(!n||!c){toast('Full name and class are required.','error');return;}}
   if(current===4){const p=document.getElementById('adm-par')?.value.trim();const ph=document.getElementById('adm-phn')?.value.trim();if(!p||!ph){toast('Parent name and phone are required.','error');return;}}
@@ -10063,7 +10060,7 @@ function admNext(current){
   // Payment required to proceed
   const paySection=document.getElementById('adm-sec-5');
   const payMethodEl=document.getElementById('adm-pay-method-pub');
-  if(isPublic && payMethodEl){
+  if(_admIsPublic && payMethodEl){
     const method=payMethodEl.value;
     if(!method){toast('Please select a payment method to proceed.','error');return;}
     if(method==='cash'){
