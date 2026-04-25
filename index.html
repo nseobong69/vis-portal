@@ -5328,18 +5328,33 @@ async function invLoadStudents(){
   area.innerHTML='<div style="text-align:center;padding:28px;"><i class="fas fa-spinner fa-spin" style="color:var(--brl);font-size:18px;"></i></div>';
   const term=document.getElementById('inv-term')?.value||SCHOOL_SETTINGS.current_term;
   const sess=document.getElementById('inv-sess')?.value||SCHOOL_SETTINGS.current_session;
-  const[{data:students},{data:existing}]=await Promise.all([
+  const[{data:students},{data:existing},{data:feeConfigs}]=await Promise.all([
     DB().from('students').select('id,full_name,admission_number,student_type').eq('class_id',cid).order('full_name'),
     DB().from('fee_payments').select('*').eq('session',sess).eq('term',term)
-      .ilike('class_name','%'+cn.split(' ')[0]+'%')
+      .ilike('class_name','%'+cn.split(' ')[0]+'%'),
+    DB().from('fee_configs').select('*').eq('session',sess).eq('term',term)
   ]);
   if(!students?.length){
     area.innerHTML='<div style="padding:20px 24px;color:var(--brl);">No students found in this class.</div>';
     return;
   }
-  // Map existing records by student_id
+  // Map existing records by student_id (first fee per student for display)
   const feeMap={};
   (existing||[]).forEach(fp=>{ if(!feeMap[fp.student_id]) feeMap[fp.student_id]=fp; });
+
+  // Auto-fill global bar from fee_configs if not already filled
+  const matchedConfig=(feeConfigs||[]).find(fc=>
+    fc.scope==='all' || fc.scope==='admission' ||
+    (fc.scope==='class' && Array.isArray(fc.class_ids) && fc.class_ids.includes(cid))
+  );
+  if(matchedConfig){
+    const ftEl=document.getElementById('inv-gftype');
+    const fnEl=document.getElementById('inv-gfamt-new');
+    const foEl=document.getElementById('inv-gfamt-old');
+    if(ftEl) ftEl.value=matchedConfig.fee_name||'School Fee';
+    if(fnEl) fnEl.value=matchedConfig.amount_new||matchedConfig.amount||'';
+    if(foEl) foEl.value=matchedConfig.amount_returning||matchedConfig.amount||'';
+  }
 
   area.innerHTML=`<div style="overflow-x:auto;-webkit-overflow-scrolling:touch;">
   <table class="tbl" style="font-size:12.5px;min-width:650px;">
@@ -5511,9 +5526,9 @@ async function saveInvoices(printAfter=false){
       paid_at:        paid>0 ? new Date().toISOString() : null,
     };
 
-    // Upsert: update if record already exists for this student/term/session/fee_type
+    // Additive upsert: check if record already exists for this student/term/session/fee_type
     const{data:ex,error:exErr}=await DB().from('fee_payments')
-      .select('id')
+      .select('id,amount_paid,status')
       .eq('student_id', sid)
       .eq('term', term)
       .eq('session', sess)
@@ -5523,8 +5538,17 @@ async function saveInvoices(printAfter=false){
 
     let error;
     if(!exErr && ex?.length){
-      ({error}=await DB().from('fee_payments').update(payload).eq('id',ex[0].id));
-      if(!error) savedIds.push(ex[0].id);
+      const existRec=ex[0];
+      const alreadyPaid=parseFloat(existRec.amount_paid||0)>0||existRec.status==='paid'||existRec.status==='partial';
+      if(alreadyPaid){
+        // Already has payment — preserve it, only update invoice amount if no payment yet
+        savedIds.push(existRec.id);
+        saved++;
+        continue;
+      }
+      // Unpaid existing — safe to update amount
+      ({error}=await DB().from('fee_payments').update(payload).eq('id',existRec.id));
+      if(!error) savedIds.push(existRec.id);
     } else {
       const res=await DB().from('fee_payments').insert(payload).select('id');
       error=res.error;
@@ -5803,10 +5827,19 @@ async function _genFeePDFFromRow(p,type){
   const{jsPDF}=window.jspdf;
   const pdf=new jsPDF({orientation:'portrait',unit:'mm',format:'a4',compress:true});
   const W=210,SS=SCHOOL_SETTINGS;
-  const due=parseFloat(p.amount)||0;
-  const paid=parseFloat(p.amount_paid||0)||0;
-  const bal=due-paid;
   const isReceipt=(type==='receipt');
+  // Fetch all fees for this student/term/session for multi-fee PDF
+  const{data:allFees}=await DB().from('fee_payments')
+    .select('*').eq('student_id',p.student_id).eq('term',p.term).eq('session',p.session)
+    .order('created_at',{ascending:true});
+  const fees=(allFees?.length?allFees:[p]);
+  const totalDue=fees.reduce((s,f)=>s+parseFloat(f.amount||0),0);
+  const totalPaid=fees.reduce((s,f)=>s+parseFloat(f.amount_paid||0),0);
+  const totalBal=totalDue-totalPaid;
+  // Legacy single-row compat
+  const due=totalDue;
+  const paid=totalPaid;
+  const bal=totalBal;
   const docTitle=isReceipt?'OFFICIAL PAYMENT RECEIPT':'FEE INVOICE';
   const aR=isReceipt?22:37,aG=isReceipt?163:99,aB=isReceipt?74:235;
 
@@ -5855,27 +5888,38 @@ async function _genFeePDFFromRow(p,type){
   // Fee table header
   pdf.setFillColor(93,64,55);pdf.rect(16,y,W-32,7,'F');
   pdf.setTextColor(255,255,255);pdf.setFont('helvetica','bold');pdf.setFontSize(7.5);
-  pdf.text('Description',20,y+5);pdf.text('Amount',W-18,y+5,{align:'right'});
+  pdf.text('Description',20,y+5);pdf.text('Amount (\u20a6)',W-18,y+5,{align:'right'});
   y+=7;
-  // Fee row
-  pdf.setFillColor(250,248,245);pdf.rect(16,y,W-32,7,'F');
-  pdf.setDrawColor(215,205,195);pdf.rect(16,y,W-32,7,'S');
-  pdf.setFont('helvetica','normal');pdf.setTextColor(30,30,30);pdf.setFontSize(7.5);
-  pdf.text(p.fee_type||'School Fee',20,y+5);
-  pdf.text('\u20a6'+due.toLocaleString('en-NG'),W-18,y+5,{align:'right'});
-  y+=7;
+  // Fee rows — all fee types for this student/term/session
+  fees.forEach(f=>{
+    const fDue=parseFloat(f.amount||0);
+    pdf.setFillColor(250,248,245);pdf.rect(16,y,W-32,7,'F');
+    pdf.setDrawColor(215,205,195);pdf.rect(16,y,W-32,7,'S');
+    pdf.setFont('helvetica','normal');pdf.setTextColor(30,30,30);pdf.setFontSize(7.5);
+    pdf.text(f.fee_type||'School Fee',20,y+5);
+    pdf.text('\u20a6'+fDue.toLocaleString('en-NG'),W-18,y+5,{align:'right'});
+    y+=7;
+  });
+  // Grand total row (only if multiple fees)
+  if(fees.length>1){
+    pdf.setFillColor(75,50,40);pdf.rect(16,y,W-32,7,'F');
+    pdf.setTextColor(255,255,255);pdf.setFont('helvetica','bold');pdf.setFontSize(7.5);
+    pdf.text('TOTAL',20,y+5);
+    pdf.text('\u20a6'+totalDue.toLocaleString('en-NG'),W-18,y+5,{align:'right'});
+    y+=7;
+  }
   if(isReceipt){
     pdf.setFillColor(236,253,245);pdf.rect(16,y,W-32,7,'F');
     pdf.setDrawColor(167,243,208);pdf.rect(16,y,W-32,7,'S');
     pdf.setFont('helvetica','bold');pdf.setTextColor(aR,aG,aB);pdf.setFontSize(7.5);
-    pdf.text('Amount Paid',20,y+5);pdf.text('\u20a6'+paid.toLocaleString('en-NG'),W-18,y+5,{align:'right'});
+    pdf.text('Total Paid',20,y+5);pdf.text('\u20a6'+totalPaid.toLocaleString('en-NG'),W-18,y+5,{align:'right'});
     y+=7;
-    const bc=bal<=0?[aR,aG,aB]:[220,38,38];
-    pdf.setFillColor(bal<=0?236:255,bal<=0?253:235,bal<=0?245:235);pdf.rect(16,y,W-32,7,'F');
+    const bc=totalBal<=0?[aR,aG,aB]:[220,38,38];
+    pdf.setFillColor(totalBal<=0?236:255,totalBal<=0?253:235,totalBal<=0?245:235);pdf.rect(16,y,W-32,7,'F');
     pdf.setDrawColor(210,200,190);pdf.rect(16,y,W-32,7,'S');
     pdf.setTextColor(...bc);pdf.setFont('helvetica','bold');pdf.setFontSize(7.5);
-    pdf.text('Balance',20,y+5);
-    pdf.text('\u20a6'+bal.toLocaleString('en-NG')+(bal<=0?' \u2713':''),W-18,y+5,{align:'right'});
+    pdf.text('Outstanding Balance',20,y+5);
+    pdf.text('\u20a6'+totalBal.toLocaleString('en-NG')+(totalBal<=0?' \u2713':''),W-18,y+5,{align:'right'});
     y+=7;
   }
   y+=4;
@@ -6172,58 +6216,67 @@ async function loadBulkCashStudents(){
   area.innerHTML='<div style="text-align:center;padding:14px;"><i class="fas fa-spinner fa-spin" style="color:var(--brl);"></i></div>';
   const term=document.getElementById('bcp-term')?.value||SCHOOL_SETTINGS.current_term;
   const sess=document.getElementById('bcp-sess')?.value||SCHOOL_SETTINGS.current_session;
-  const[{data:students},{data:existing}]=await Promise.all([
-    DB().from('students').select('id,full_name,admission_number').eq('class_id',cid).order('full_name'),
-    DB().from('fee_payments').select('*').ilike('class_name','%'+cn.split(' ')[0]+'%').eq('term',term).eq('session',sess)
-  ]);
-  const feeMap={};(existing||[]).forEach(fp=>feeMap[fp.student_id]=fp);
-  if(!students?.length){area.innerHTML='<p style="color:var(--brl);padding:12px;">No students found.</p>';return;}
-  area.innerHTML=`<table class="tbl" style="font-size:12.5px;">
-    <thead><tr><th><input type="checkbox" id="bcp-all-chk" onchange="document.querySelectorAll('.bcp-chk').forEach(c=>c.checked=this.checked)" style="accent-color:var(--br);"></th><th>Student</th><th>Fee Type</th><th>Fee Amount (₦)</th><th>Amount to Pay (₦)</th></tr></thead>
-    <tbody>${(students||[]).map(s=>{
-      const ex=feeMap[s.id];
-      return`<tr data-sid="${s.id}" data-name="${(s.full_name||'').replace(/"/g,'&quot;')}" data-adm="${s.admission_number||''}" data-cname="${cn}" data-cid="${cid}">
-        <td><input type="checkbox" class="bcp-chk" value="${s.id}" checked style="accent-color:var(--br);"></td>
-        <td style="font-weight:600;color:var(--br);">${s.full_name}</td>
-        <td><input class="bcp-ftype input" placeholder="School Fee" value="${ex?.fee_type||'School Fee'}" style="padding:5px;font-size:12px;width:120px;"></td>
-        <td><input class="bcp-famt input" type="number" min="0" placeholder="Amount" value="${ex?.amount||''}" style="padding:5px;font-size:12px;width:100px;"></td>
-        <td><input class="bcp-paid input" type="number" min="0" placeholder="Paid" value="${ex?.amount_paid||''}" style="padding:5px;font-size:12px;width:100px;"></td>
+  const{data:invoices}=await DB().from('fee_payments').select('*')
+    .ilike('class_name','%'+cn.split(' ')[0]+'%')
+    .eq('term',term).eq('session',sess)
+    .neq('status','paid').order('student_name');
+  if(!invoices?.length){
+    area.innerHTML='<div style="padding:16px 12px;color:var(--brl);text-align:center;"><i class="fas fa-check-circle" style="color:#16A34A;margin-right:6px;font-size:16px;"></i>No outstanding invoices found for this class/term/session. Create invoices first.</div>';
+    return;
+  }
+  area.innerHTML=`<div style="overflow-x:auto;-webkit-overflow-scrolling:touch;"><table class="tbl" style="font-size:12.5px;min-width:600px;">
+    <thead><tr>
+      <th style="background:var(--cr);"><input type="checkbox" id="bcp-all-chk" onchange="document.querySelectorAll('.bcp-chk').forEach(c=>c.checked=this.checked)" style="accent-color:var(--br);"></th>
+      <th style="background:var(--cr);">Student</th>
+      <th style="background:var(--cr);">Fee Type</th>
+      <th style="background:var(--cr);">Amount Due (₦)</th>
+      <th style="background:var(--cr);">Paid So Far (₦)</th>
+      <th style="background:var(--cr);">Balance (₦)</th>
+      <th style="background:var(--cr);">Pay Now (₦)</th>
+    </tr></thead>
+    <tbody>${(invoices||[]).map(inv=>{
+      const due=parseFloat(inv.amount||0);
+      const paid=parseFloat(inv.amount_paid||0);
+      const bal=Math.max(0,due-paid);
+      return`<tr data-fid="${inv.id}" data-due="${due}" data-bal="${bal}" data-sname="${(inv.student_name||'').replace(/"/g,'&quot;')}">
+        <td><input type="checkbox" class="bcp-chk" checked style="accent-color:var(--br);"></td>
+        <td style="font-weight:600;color:var(--br);">${inv.student_name||'—'}<div style="font-size:10px;color:var(--brl);">${inv.admission_number||''}</div></td>
+        <td>${inv.fee_type||'School Fee'}</td>
+        <td>₦${due.toLocaleString('en-NG')}</td>
+        <td>${paid>0?'<span style="color:#16A34A;">₦'+paid.toLocaleString('en-NG')+'</span>':'<span style="color:var(--brl);">—</span>'}</td>
+        <td style="font-weight:700;color:#EF4444;">₦${bal.toLocaleString('en-NG')}</td>
+        <td><input class="bcp-paynow input" type="number" min="0" max="${bal}" value="${bal}" style="padding:5px 7px;font-size:12px;width:90px;"></td>
       </tr>`;
     }).join('')}</tbody>
-  </table>`;
+  </table></div>`;
 }
 
 async function saveBulkCashPayments(){
   const ptype=document.querySelector('input[name="bcp-ptype"]:checked')?.value||'full';
-  const term=document.getElementById('bcp-term')?.value||SCHOOL_SETTINGS.current_term;
-  const sess=document.getElementById('bcp-sess')?.value||SCHOOL_SETTINGS.current_session;
-  const rows=[...document.querySelectorAll('#bcp-students-area tbody tr[data-sid]')];
+  const rows=[...document.querySelectorAll('#bcp-students-area tbody tr[data-fid]')];
   const checked=rows.filter(r=>r.querySelector('.bcp-chk')?.checked);
-  if(!checked.length){toast('Select students first.','error');return;}
+  if(!checked.length){toast('Select invoices first.','error');return;}
   let saved=0,errors=0;
   for(const row of checked){
-    const sid=row.dataset.sid;
-    const sname=row.dataset.name;
-    const adm=row.dataset.adm;
-    const cname=row.dataset.cname;
-    const ftype=row.querySelector('.bcp-ftype')?.value.trim()||'School Fee';
-    const famt=parseFloat(row.querySelector('.bcp-famt')?.value)||0;
-    const paidEntry=parseFloat(row.querySelector('.bcp-paid')?.value)||0;
-    if(!famt){continue;}
-    const amtPaid=ptype==='full'?famt:paidEntry;
-    const newBal=famt-amtPaid;
-    const status=newBal<=0?'paid':'partial';
-    // Check if record exists
-    const{data:ex}=await DB().from('fee_payments').select('id').eq('student_id',sid).eq('term',term).eq('session',sess).eq('fee_type',ftype).limit(1);
-    if(ex?.length){
-      const{error}=await DB().from('fee_payments').update({amount:famt,amount_paid:amtPaid,status,payment_method:'Cash',approved_by:UP?.full_name||null,paid_at:new Date().toISOString()}).eq('id',ex[0].id);
-      if(error) errors++;else saved++;
-    } else {
-      const{error}=await DB().from('fee_payments').insert({student_id:sid,student_name:sname,admission_number:adm,class_name:cname,fee_type:ftype,amount:famt,amount_paid:amtPaid,status,payment_method:'Cash',approved_by:UP?.full_name||null,term,session:sess,created_by:UP?.id||null,paid_at:amtPaid>0?new Date().toISOString():null});
-      if(error) errors++;else saved++;
-    }
+    const fid=row.dataset.fid;
+    const due=parseFloat(row.dataset.due)||0;
+    const bal=parseFloat(row.dataset.bal)||0;
+    const payNow=ptype==='full'?bal:parseFloat(row.querySelector('.bcp-paynow')?.value)||0;
+    if(!payNow) continue;
+    // Fetch current record to accumulate payments correctly
+    const{data:cur}=await DB().from('fee_payments').select('amount_paid').eq('id',fid).single();
+    const prevPaid=parseFloat(cur?.amount_paid||0);
+    const newPaid=Math.min(prevPaid+payNow,due);
+    const status=newPaid>=due?'paid':'partial';
+    const{error}=await DB().from('fee_payments').update({
+      amount_paid:newPaid,status,
+      payment_method:'Cash',
+      approved_by:UP?.full_name||null,
+      paid_at:new Date().toISOString()
+    }).eq('id',fid);
+    if(error) errors++;else saved++;
   }
-  if(errors) toast(`⚠️ ${saved} saved, ${errors} failed. ${lastErr?'Error: '+lastErr:''}`,'error');
+  if(errors) toast(`⚠️ ${saved} saved, ${errors} failed.`,'error');
   else toast(`✅ ${saved} payment(s) recorded!`);
   closeModal();
   await loadFinanceTable();
@@ -6664,7 +6717,11 @@ async function blockResult(id,v){await DB().from('students').update({results_blo
         <div><label class="lbl">Term</label><select id="fc-term" class="input"><option>1st Term</option><option>2nd Term</option><option>3rd Term</option></select></div>
       </div>
       <div><label class="lbl">Fee Name</label><input id="fc-name" class="input" placeholder="e.g. School Fee, Admission Fee, PTA Levy"></div>
-      <div><label class="lbl">Amount (₦)</label><input id="fc-amount" class="input" type="number" min="0" placeholder="e.g. 25000"></div>
+      <div class="g2">
+        <div><label class="lbl">Amount — New Student (₦)</label><input id="fc-amount-new" class="input" type="number" min="0" placeholder="e.g. 25000"></div>
+        <div><label class="lbl">Amount — Returning Student (₦)</label><input id="fc-amount-ret" class="input" type="number" min="0" placeholder="e.g. 20000"></div>
+      </div>
+      <div style="font-size:11.5px;color:var(--brl);margin-top:-6px;"><i class="fas fa-info-circle"></i> Leave returning blank if same as new. Leave both blank to set amount per student in Create Invoice.</div>
       <div><label class="lbl">Apply To</label>
         <select id="fc-scope" class="input" onchange="document.getElementById('fc-class-wrap').style.display=this.value==='class'?'block':'none'">
           <option value="all">All Classes</option>
@@ -6688,9 +6745,11 @@ async function blockResult(id,v){await DB().from('students').update({results_blo
 async function saveFeeConfig(){
   const sess=$('fc-sess').value,term=$('fc-term').value;
   const name=($('fc-name')?.value||'').trim();
-  const amount=parseFloat($('fc-amount')?.value)||0;
+  const amtNew=parseFloat($('fc-amount-new')?.value)||0;
+  const amtRet=parseFloat($('fc-amount-ret')?.value)||0;
+  const amount=amtNew||amtRet; // backwards-compat default
   const scope=$('fc-scope')?.value||'all';
-  if(!name||!amount){toast('Fee name and amount are required.','error');return;}
+  if(!name){toast('Fee name is required.','error');return;}
   let targetClasses=null;
   if(scope==='class'){
     const checked=[...document.querySelectorAll('.fc-cls-chk:checked')].map(c=>({id:c.value,name:c.dataset.name}));
@@ -6698,9 +6757,9 @@ async function saveFeeConfig(){
     targetClasses=checked;
   }
   // Create fee_config record
-  const{error}=await DB().from('fee_configs').insert({fee_name:name,amount,session:sess,term,scope,class_ids:targetClasses?targetClasses.map(c=>c.id):null,created_by:UP?.id||null});
+  const{error}=await DB().from('fee_configs').insert({fee_name:name,amount,amount_new:amtNew||null,amount_returning:amtRet||null,session:sess,term,scope,class_ids:targetClasses?targetClasses.map(c=>c.id):null,created_by:UP?.id||null});
   if(error){toast('Error: '+error.message,'error');return;}
-  toast('✅ Fee created! Assign to students from Finance dashboard.');
+  toast('✅ Fee configured! It will auto-load in Create Invoice.');
   closeModal();renderFinance();
 }
 // Legacy alias — redirects to new unified bulk doc modal
