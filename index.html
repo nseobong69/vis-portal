@@ -3605,7 +3605,7 @@ async function executeSendCodes(examId){
         try{
           await sendEmailDelivery({
             toEmail:s.email,toName:s.full_name,
-            subject:`Your Exam Access Code — ${exam?.subject_name||exam?.title}`,
+            subject:`Your Exam Access Code — ${exam?.subject_name||exam?.title} (${fromFmt})`,
             bodyHtml:`<p>Dear <strong>${s.full_name}</strong>,</p>
               <p>Your access code for the upcoming exam:</p>
               <div style="background:#f0f4ff;padding:18px;border-radius:8px;text-align:center;margin:14px 0;">
