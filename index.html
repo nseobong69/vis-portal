@@ -11195,7 +11195,14 @@ async function sendBulkEmails(){
 let _faceApiLoaded=false;
 async function _ensureFaceApi(){
   if(_faceApiLoaded) return true;
-  if(!window.faceapi){return false;}
+  // FIX A: Poll up to 10s for deferred script to finish loading before giving up
+  if(!window.faceapi){
+    for(let i=0;i<20;i++){
+      await new Promise(r=>setTimeout(r,500));
+      if(window.faceapi) break;
+    }
+    if(!window.faceapi) return false;
+  }
   try{
     const MODEL_URL='https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/weights';
     await Promise.all([
@@ -11204,6 +11211,7 @@ async function _ensureFaceApi(){
       faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
     ]);
     _faceApiLoaded=true;
+    window._faceApiLoaded=true; // FIX B: sync window scope so look-away detector activates
     return true;
   }catch(e){return false;}
 }
