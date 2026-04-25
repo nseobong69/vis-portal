@@ -92,7 +92,7 @@ body.dark .tbl tr:hover td{background:#3E2723;}
 }
 .vis-avatar-img{width:100%;height:100%;object-fit:cover;border-radius:inherit;}
 .vis-logo-img{object-fit:contain;border-radius:inherit;}
-#cbt-video-pip{position:fixed;top:70px;right:14px;width:240px;height:100px;border-radius:12px;z-index:500;background:#000;overflow:hidden;box-shadow:0 4px 18px rgba(0,0,0,.35);display:flex;}
+#cbt-video-pip{position:fixed;top:70px;right:14px;width:240px;height:100px;border-radius:12px;z-index:500;background:#000;overflow:hidden;box-shadow:0 4px 18px rgba(0,0,0,.35);}
 #cbt-noise-warn{position:fixed;top:200px;right:14px;width:180px;background:#EF4444;color:#fff;padding:10px 14px;border-radius:11px;font-size:12.5px;font-weight:700;z-index:501;display:none;text-align:center;}
 .profile-pic-wrap{position:relative;width:90px;height:90px;border-radius:18px;overflow:hidden;cursor:pointer;border:3px dashed var(--brl);}
 .profile-pic-wrap:hover{border-color:var(--br);}
@@ -800,10 +800,26 @@ async function studentExamCodeLogin(){
     const{data:st,error:se}=await DB().from('students').select('*').eq('admission_number',adm).single();
     if(se||!st){authMsg('❌ Student not found.');return;}
     if(st.blocked){authMsg('❌ Account blocked. Contact admin.');return;}
-    // Find a per-student CBT code for this student
+    // Find a per-student CBT code for this student — check all statuses first
     const{data:sc,error:sce}=await DB().from('cbt_student_codes')
-      .select('*').eq('student_id',st.id).eq('code',enteredCode).eq('status','active').single();
-    if(sce||!sc){authMsg('❌ Invalid or expired access code for your account.');return;}
+      .select('*').eq('student_id',st.id).eq('code',enteredCode).single();
+    if(sce||!sc){authMsg('❌ Invalid access code for your account. Contact your teacher.');return;}
+    // Fix 2: block reuse if code already used
+    if(sc.status==='used'){
+      // Fetch prior submission details
+      let subMsg='You have already submitted this exam. You cannot retake it.';
+      try{
+        const{data:sub}=await DB().from('cbt_submissions')
+          .select('score,total_marks,percentage').eq('exam_id',sc.exam_id).eq('student_id',st.id).single();
+        if(sub){
+          const pct=sub.percentage!=null?sub.percentage.toFixed(1):((sub.total_marks>0?(sub.score/sub.total_marks*100):0)).toFixed(1);
+          subMsg=`You have already submitted this exam (Score: ${sub.score}/${sub.total_marks} — ${pct}%). You cannot retake it.`;
+        }
+      }catch(e){}
+      authMsg('❌ '+subMsg);return;
+    }
+    if(sc.status==='invalidated'){authMsg('❌ This access code has been invalidated. Contact your teacher for a new code.');return;}
+    if(sc.status!=='active'){authMsg('❌ This access code is no longer valid. Contact your teacher.');return;}
     CU={id:st.id,email:st.email||adm};
     UP=st;
     ROLE='student';
@@ -2480,10 +2496,17 @@ async function getMyClasses(){
 async function renderResults(){
   if(ROLE==='student'||ROLE==='pin_viewer'){renderMyResults();return;}
   setPage('Results Management','Enter and publish student results');
-  const[classes,{data:subjects}]=await Promise.all([
+  const[classes,{data:allSubjects}]=await Promise.all([
     getMyClasses(),
     DB().from('subjects').select('id,name').order('name')
   ]);
+  // Fix 3: subject_teacher only sees their assigned subjects
+  let subjects=allSubjects||[];
+  if(ROLE==='subject_teacher'){
+    const{data:ts}=await DB().from('teacher_subjects').select('subject_id').eq('teacher_id',UP?.id);
+    const assignedIds=new Set((ts||[]).map(r=>r.subject_id).filter(Boolean));
+    subjects=subjects.filter(s=>assignedIds.has(s.id));
+  }
   const cOpts=classes.map(c=>`<option value="${c.id}" data-n="${c.name}${c.arm?' '+c.arm:''}">${c.name}${c.arm?' '+c.arm:''}</option>`).join('');
   const sOpts=subjects.map(s=>`<option value="${s.id}" data-n="${s.name}">${s.name}</option>`).join('');
   setContent(`<div class="card" style="padding:22px;margin-bottom:20px;">
@@ -2512,6 +2535,12 @@ async function loadSheet(){
   if(ROLE==='teacher'){
     const{data:sc}=await DB().from('teacher_subjects').select('id').eq('teacher_id',UP?.id).eq('subject_id',sid).single();
     if(!sc){toast('Access denied: You are not assigned to this subject.','error');return;}
+  }
+  // Fix 3: subject_teacher must be assigned to BOTH this class and this subject
+  if(ROLE==='subject_teacher'){
+    const{data:chk}=await DB().from('teacher_subjects').select('id')
+      .eq('teacher_id',UP?.id).eq('subject_id',sid).eq('class_id',cid).single();
+    if(!chk){toast('⛔ Access denied: You are not assigned to teach this subject in this class.','error');return;}
   }
   const cn=cSel.options[cSel.selectedIndex].dataset.n;
   const sn=sSel.options[sSel.selectedIndex].dataset.n;
@@ -3592,24 +3621,40 @@ async function executeSendCodes(examId){
       for(const s of students){
         const code=codeMap[s.id];
         if(!code||!s.email) continue;
+        const fromFmt=exam?.start_at?new Date(exam.start_at).toLocaleString('en-GB',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}):'Immediately';
+        const untilFmt=exam?.end_at?new Date(exam.end_at).toLocaleString('en-GB',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}):'Open';
+        const plainMsg=`Dear ${s.full_name},\n\nYour personal exam access code is:\n\n${code}\n\nExam: ${exam?.subject_name||exam?.title||'—'}\nClass: ${exam?.class_name||'—'}\nDuration: ${exam?.duration_minutes||'—'} minutes\nFrom: ${fromFmt}\nUntil: ${untilFmt}\n\nUse your Admission Number + this code to enter the exam.\n⚠️ This code is personal. Do NOT share it.\n\n${SCHOOL_SETTINGS.school_name}`;
         try{
           await sendEmailDelivery({
-            toEmail:s.email,toName:s.full_name,
-            subject:`Your Exam Access Code — ${exam?.subject_name||exam?.title}`,
-            bodyHtml:`<p>Dear <strong>${s.full_name}</strong>,</p>
-              <p>Your access code for the upcoming exam:</p>
-              <div style="background:#f0f4ff;padding:18px;border-radius:8px;text-align:center;margin:14px 0;">
-                <div style="font-size:11px;color:#6b7280;margin-bottom:6px;">EXAM</div>
-                <div style="font-size:16px;font-weight:700;color:#1e40af;">${exam?.subject_name||exam?.title}</div>
-                <div style="font-size:11px;color:#6b7280;margin:8px 0;">YOUR ACCESS CODE</div>
-                <div style="font-size:28px;font-weight:900;color:#2563eb;letter-spacing:.1em;font-family:monospace;">${code}</div>
+            toEmail:s.email,
+            toName:s.full_name,
+            subject:`Your Exam Access Code — ${exam?.subject_name||exam?.title} [${code}]`,
+            message:plainMsg,
+            bodyHtml:`<div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;">
+              <div style="background:#5D4037;padding:18px 24px;border-radius:10px 10px 0 0;">
+                <div style="color:#fff;font-size:16px;font-weight:700;">${SCHOOL_SETTINGS.school_name||'School Portal'}</div>
+                <div style="color:rgba(255,255,255,.8);font-size:12px;margin-top:2px;">Exam Access Code</div>
               </div>
-              <p><strong>Subject:</strong> ${exam?.subject_name||'—'}<br>
-              <strong>Duration:</strong> ${exam?.duration_minutes} minutes<br>
-              <strong>Class:</strong> ${exam?.class_name||'—'}</p>
-              <p>Log in with your <strong>Admission Number</strong> and this code on the CBT portal.</p>
-              <p style="color:#ef4444;"><strong>⚠️ This code is personal. Do not share it.</strong></p>
-              <p><em>${SCHOOL_SETTINGS.school_name}</em></p>`
+              <div style="border:1px solid #e5e7eb;border-top:none;border-radius:0 0 10px 10px;padding:24px;">
+                <p style="margin:0 0 14px;font-size:14px;color:#374151;">Dear <strong>${s.full_name}</strong>,</p>
+                <p style="margin:0 0 18px;font-size:13px;color:#6b7280;">Your personal access code for the upcoming exam is below:</p>
+                <div style="background:#f0f4ff;border:2px solid #2563EB;padding:20px;border-radius:10px;text-align:center;margin:0 0 20px;">
+                  <div style="font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px;">YOUR ACCESS CODE</div>
+                  <div style="font-size:34px;font-weight:900;color:#1e40af;letter-spacing:.15em;font-family:monospace;">${code}</div>
+                </div>
+                <table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:18px;">
+                  <tr><td style="padding:7px 0;color:#6b7280;border-bottom:1px solid #f3f4f6;width:120px;">📚 Subject</td><td style="padding:7px 0;font-weight:600;color:#111827;border-bottom:1px solid #f3f4f6;">${exam?.subject_name||'—'}</td></tr>
+                  <tr><td style="padding:7px 0;color:#6b7280;border-bottom:1px solid #f3f4f6;">🏫 Class</td><td style="padding:7px 0;font-weight:600;color:#111827;border-bottom:1px solid #f3f4f6;">${exam?.class_name||'—'}</td></tr>
+                  <tr><td style="padding:7px 0;color:#6b7280;border-bottom:1px solid #f3f4f6;">⏱ Duration</td><td style="padding:7px 0;font-weight:600;color:#111827;border-bottom:1px solid #f3f4f6;">${exam?.duration_minutes||'—'} minutes</td></tr>
+                  <tr><td style="padding:7px 0;color:#6b7280;border-bottom:1px solid #f3f4f6;">📅 From</td><td style="padding:7px 0;font-weight:600;color:#111827;border-bottom:1px solid #f3f4f6;">${fromFmt}</td></tr>
+                  <tr><td style="padding:7px 0;color:#6b7280;">📅 Until</td><td style="padding:7px 0;font-weight:600;color:#111827;">${untilFmt}</td></tr>
+                </table>
+                <p style="font-size:13px;color:#374151;margin:0 0 8px;">Log in with your <strong>Admission Number</strong> and this code on the CBT portal to start the exam.</p>
+                <p style="font-size:12px;color:#ef4444;font-weight:700;margin:0 0 18px;">⚠️ This code is personal and tied to your account. Do NOT share it with anyone.</p>
+                <hr style="border:none;border-top:1px solid #e5e7eb;margin:0 0 14px;">
+                <p style="font-size:11px;color:#9ca3af;margin:0;">${SCHOOL_SETTINGS.school_name} · Powered by VIS School Portal</p>
+              </div>
+            </div>`
           });
           sent++;
         }catch(e){}
@@ -4163,8 +4208,28 @@ async function startExam(examId,isAptitude=false,aptCode=null,aptCodeId=null){
 
   // ── 3. Block re-take ──────────────────────────────────────────────────────
   if(!isAptitude){
-    const{data:existSub}=await DB().from('cbt_submissions').select('id').eq('exam_id',examId).eq('student_id',CU.id).limit(1);
-    if(existSub?.length){toast('You have already submitted this exam.','error');return;}
+    const{data:existSub}=await DB().from('cbt_submissions')
+      .select('score,total_marks,percentage,submitted_at').eq('exam_id',examId).eq('student_id',CU.id).limit(1);
+    if(existSub?.length){
+      const s=existSub[0];
+      const pct=s.percentage!=null?parseFloat(s.percentage).toFixed(1):(s.total_marks>0?(s.score/s.total_marks*100).toFixed(1):'0');
+      const g=grade(parseFloat(pct));
+      setPage('Exam Already Submitted','');
+      setContent(`<div class="card" style="padding:48px;text-align:center;max-width:540px;margin:0 auto;">
+        <i class="fas fa-check-circle fa-3x" style="color:#16A34A;margin-bottom:18px;display:block;"></i>
+        <h3 class="hf" style="font-size:22px;color:var(--br);margin-bottom:8px;">Already Submitted</h3>
+        <p style="color:var(--brl);font-size:13.5px;margin-bottom:22px;">You have already completed this exam. Retaking is not permitted.</p>
+        <div style="background:var(--cr);border-radius:14px;padding:20px;margin-bottom:22px;display:inline-block;min-width:280px;">
+          <div style="font-size:13px;color:var(--brl);margin-bottom:4px;">Your Score</div>
+          <div style="font-size:38px;font-weight:800;color:var(--br);">${s.score}/${s.total_marks}</div>
+          <div style="font-size:18px;font-weight:700;color:${g.c};margin-top:4px;">${pct}% — Grade ${g.g}</div>
+          ${s.submitted_at?`<div style="font-size:11.5px;color:var(--brl);margin-top:8px;">Submitted: ${fmtDate(s.submitted_at)}</div>`:''}
+        </div>
+        <div style="font-size:12.5px;color:#EF4444;font-weight:600;margin-bottom:16px;">⚠️ This exam access code has been used and cannot be reused.</div>
+        <button onclick="renderStudentExams()" class="btn btn-outline" style="justify-content:center;padding:11px 24px;"><i class="fas fa-arrow-left"></i> Back to Exams</button>
+      </div>`);
+      return;
+    }
   }
 
   // ── 4. Fetch questions ────────────────────────────────────────────────────
@@ -7415,6 +7480,17 @@ async function confirmProfileEmailOTP(){
   document.getElementById('pf-otp-wrap').style.display='none';
   toast('✅ Email verified successfully!');
   renderProfile();
+  // Fix 1: if profile is already completed, auto-navigate to dashboard
+  if(UP?.profile_completed){
+    const isUnrestricted=['super_admin','admin','proprietor','head_teacher','principal','bursar'].includes(ROLE)||ROLE==='pin_viewer'||ROLE==='aptitude_guest';
+    if(!isUnrestricted){
+      setTimeout(()=>{
+        loadNotifs();
+        _subscribeAnnouncements();
+        renderDashboard();
+      },1200);
+    }
+  }
 }
 
 async function saveProfile(){
@@ -7444,10 +7520,19 @@ async function saveProfile(){
     }
   }
   window._pendingAvatarUrl=null;
-  sessionStorage.setItem('vis_session',JSON.stringify({CU,UP,ROLE}));
+  sessionStorage.setItem('vis_session',JSON.stringify({CU,UP,ROLE,ALL_ROLES:window._ALL_ROLES||[ROLE]}));
   updateAvatarEl($('nav-avatar'),UP,UP.full_name||'U');
   updateAvatarEl($('sb-avatar'),UP,UP.full_name||'U');
   toast('✅ Profile saved successfully!');
+  // Fix 1: auto-navigate to dashboard if profile is now complete
+  const isUnrestricted=['super_admin','admin','proprietor','head_teacher','principal','bursar'].includes(ROLE)||ROLE==='pin_viewer'||ROLE==='aptitude_guest';
+  if(!isUnrestricted && UP?.email_verified && UP?.profile_completed){
+    setTimeout(()=>{
+      loadNotifs();
+      _subscribeAnnouncements();
+      renderDashboard();
+    },800);
+  }
 }
   // ═══════════════════════════════════════════
 // CLOUDINARY UPLOAD
@@ -8882,12 +8967,12 @@ async function initExamMedia(examId, durationMins){
     ?`<img id="cbt-verified-snap" src="${snapSrc}" style="width:100%;height:100%;object-fit:cover;display:block;">`
     :`<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:#1a1a1a;color:#666;font-size:10px;text-align:center;padding:4px;">No<br>Photo</div>`;
   pip.innerHTML=`
-    <div style="display:flex;gap:4px;width:100%;height:100%;">
-      <div style="flex:1;position:relative;border-radius:8px;overflow:hidden;border:2px solid #5D4037;">
+    <div style="display:flex;gap:0;width:100%;height:100%;">
+      <div style="flex:1;position:relative;border-radius:8px 0 0 8px;overflow:hidden;border:2px solid #5D4037;">
         ${snapHtml}
         <div style="position:absolute;bottom:0;left:0;right:0;text-align:center;font-size:8px;font-weight:700;color:#fff;background:rgba(93,64,55,.75);padding:2px;">✅ VERIFIED</div>
       </div>
-      <div style="flex:1;position:relative;border-radius:8px;overflow:hidden;border:2px solid #22C55E;">
+      <div style="flex:1;position:relative;border-radius:0 8px 8px 0;overflow:hidden;border:2px solid #22C55E;">
         <video autoplay muted playsinline id="cbt-vid" style="width:100%;height:100%;object-fit:cover;transform:scaleX(-1);"></video>
         <div style="position:absolute;bottom:0;left:0;right:0;text-align:center;font-size:8px;font-weight:700;color:#fff;background:rgba(0,0,0,.5);padding:2px;">🔴 LIVE</div>
       </div>
@@ -8918,8 +9003,9 @@ async function initExamMedia(examId, durationMins){
         if(window._faceSwapCount===1){
           toast('⚠️ '+name+': Unrecognised face detected! Switch back immediately.','error');
           _speakWarning(name+', this face does not match the verified identity. Please face the camera now.');
-          // Flash the LIVE box red briefly
-          const liveBox=document.querySelector('#cbt-video-pip div:last-child');
+          // Fix 5: correct selector — live panel is the second div inside the flex wrapper
+          const pipInner=document.querySelector('#cbt-video-pip > div');
+          const liveBox=pipInner?pipInner.children[1]:null;
           if(liveBox){liveBox.style.border='3px solid #EF4444';setTimeout(()=>{liveBox.style.border='2px solid #22C55E';},3000);}
         } else if(window._faceSwapCount>=2){
           clearInterval(window._faceMatchInterval);window._faceMatchInterval=null;
@@ -8927,9 +9013,10 @@ async function initExamMedia(examId, durationMins){
         }
       } else {
         window._faceSwapCount=0; // reset on good match
-        // Flash the LIVE box green briefly to confirm match
-        const liveBox=document.querySelector('#cbt-video-pip div:last-child');
-        if(liveBox&&window._faceSwapCount===0){liveBox.style.borderColor='#22C55E';}
+        // Fix 5: correct selector for good-match green restore
+        const pipInner2=document.querySelector('#cbt-video-pip > div');
+        const liveBox2=pipInner2?pipInner2.children[1]:null;
+        if(liveBox2) liveBox2.style.borderColor='#22C55E';
       }
     }catch(e){}
   },3000);
@@ -9016,6 +9103,8 @@ function detachExamMedia(){
   if(window._examAudioCtx){window._examAudioCtx.close().catch(()=>{});window._examAudioCtx=null;}
   if(window._noiseInterval){clearInterval(window._noiseInterval);window._noiseInterval=null;}
   if(window._snapTimers){window._snapTimers.forEach(t=>clearTimeout(t));window._snapTimers=[];}
+  // Fix 5: revoke blob URL to free memory
+  if(window._verifiedFaceSnapBlob){try{URL.revokeObjectURL(window._verifiedFaceSnapBlob);}catch(e){}window._verifiedFaceSnapBlob=null;}
   const pip=document.getElementById('cbt-video-pip');if(pip)pip.remove();
   const nw=document.getElementById('cbt-noise-warn');if(nw)nw.remove();
   window._noiseWarnings=0;window._snapCount=0;
@@ -9503,11 +9592,13 @@ async function sendEmailDelivery({toEmail,toName,subject,bodyHtml,message}){
       await new Promise(res=>{const s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js';s.onload=res;document.head.appendChild(s);});
       window.emailjs.init({publicKey});
     }
+    // Strip HTML to plain text for message field if not separately supplied
+    const plainMessage=message||(bodyHtml||subject).replace(/<br\s*\/?>/gi,'\n').replace(/<\/p>/gi,'\n').replace(/<[^>]+>/g,'').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&').replace(/&nbsp;/g,' ').trim();
     await window.emailjs.send(serviceId,templateId,{
       to_email:toEmail,to_name:toName||'Parent/Guardian',
       school_name:schoolName,subject,
       body_html:bodyHtml||subject,
-      message:message||subject,
+      message:plainMessage,
       reply_email:SCHOOL_SETTINGS.reply_email||SCHOOL_SETTINGS.email||VIS_EMAIL
     });
     // Mark sent
@@ -11831,10 +11922,16 @@ async function renderClassHub(){
 
   // Auto-select teacher's class or previously selected
   let autoId=_hubCid;
-  if(['teacher','subject_teacher'].includes(ROLE)&&!autoId){
+  if(!autoId){
     try{
-      const{data:tc}=await DB().from('teacher_classes').select('class_id').eq('teacher_id',UP?.id).limit(1);
-      autoId=tc?.[0]?.class_id||null;
+      if(ROLE==='teacher'){
+        const{data:tc}=await DB().from('teacher_classes').select('class_id').eq('teacher_id',UP?.id).limit(1);
+        autoId=tc?.[0]?.class_id||null;
+      } else if(ROLE==='subject_teacher'){
+        // Fix 3: subject_teacher has no teacher_classes rows — look in teacher_subjects instead
+        const{data:ts}=await DB().from('teacher_subjects').select('class_id').eq('teacher_id',UP?.id).not('class_id','is',null).limit(1);
+        autoId=ts?.[0]?.class_id||null;
+      }
     }catch(e){}
   }
   if(autoId){
@@ -12278,7 +12375,14 @@ async function hubSaveScores(subj,term,sess){
 async function hubScoreSheet(){
   const area=document.getElementById('hub-tab-content');if(!area)return;
   const{data:cs}=await DB().from('class_subjects').select('subject_id,subjects(id,name)').eq('class_id',_hubCid);
-  const subjects=(cs||[]).map(r=>r.subjects).filter(Boolean);
+  let subjects=(cs||[]).map(r=>r.subjects).filter(Boolean);
+  // Fix 3: subject_teacher only sees their assigned subjects in Score Sheet
+  if(ROLE==='subject_teacher'){
+    const{data:ts}=await DB().from('teacher_subjects').select('subject_id')
+      .eq('teacher_id',UP?.id).eq('class_id',_hubCid);
+    const assignedIds=new Set((ts||[]).map(r=>r.subject_id).filter(Boolean));
+    subjects=subjects.filter(s=>assignedIds.has(s.id));
+  }
   area.innerHTML=`
     <div class="card" style="padding:16px 20px;margin-bottom:14px;">
       <div style="font-weight:700;font-size:13.5px;color:var(--br);margin-bottom:12px;"><i class="fas fa-file-pdf"></i> Score Sheet — ${_hubCname}</div>
