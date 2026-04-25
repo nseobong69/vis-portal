@@ -983,9 +983,15 @@ async function boot(){
   // Admin and super_admin always get full access
   const isUnrestricted=['super_admin','admin','proprietor','head_teacher','principal','bursar'].includes(ROLE)||ROLE==='pin_viewer'||ROLE==='aptitude_guest';
   if(!isUnrestricted){
-    // Restore email_verified from localStorage for any role where column may not exist
+    // Restore email_verified — check auth metadata first (server-side, survives cache clear),
+    // then fall back to localStorage for backward compatibility
     if(UP&&!UP.email_verified){
       if(localStorage.getItem('vis_ev_'+UP.id)==='1') UP.email_verified=true;
+      // Auth user_metadata is server-side — persists even after full cache/localStorage clear
+      try{
+        const{data:authU}=await DB().auth.getUser();
+        if(authU?.user?.user_metadata?.email_verified===true) UP.email_verified=true;
+      }catch(e){}
     }
     const missingEmail=!UP?.email&&!CU?.email;
     const notVerified=!UP?.email_verified;
@@ -2459,6 +2465,12 @@ async function getMyClasses(){
     const{data:tc}=await DB().from('teacher_classes').select('class_id,classes(id,name,arm,level)').eq('teacher_id',UP?.id);
     return (tc||[]).map(r=>r.classes).filter(Boolean);
   }
+  // Subject teachers see only the classes they have a subject assignment in
+  if(ROLE==='subject_teacher'){
+    const{data:ts}=await DB().from('teacher_subjects').select('class_id,classes(id,name,arm,level)').eq('teacher_id',UP?.id);
+    const seen=new Set();
+    return (ts||[]).filter(r=>r.classes&&!seen.has(r.class_id)&&seen.add(r.class_id)).map(r=>r.classes);
+  }
   if(ROLE==='head_teacher'){
     const{data}=await DB().from('classes').select('id,name,arm,level').in('level',['kindergarten','nursery','primary']).order('name');
     return data||[];
@@ -2473,10 +2485,15 @@ async function getMyClasses(){
 async function renderResults(){
   if(ROLE==='student'||ROLE==='pin_viewer'){renderMyResults();return;}
   setPage('Results Management','Enter and publish student results');
-  const[classes,{data:subjects}]=await Promise.all([
+  const[classes,subjectsRaw]=await Promise.all([
     getMyClasses(),
-    DB().from('subjects').select('id,name').order('name')
+    ROLE==='subject_teacher'
+      ? DB().from('teacher_subjects').select('subject_id,subjects(id,name)').eq('teacher_id',UP?.id)
+      : DB().from('subjects').select('id,name').order('name')
   ]);
+  const subjects=ROLE==='subject_teacher'
+    ?(subjectsRaw.data||[]).map(r=>r.subjects).filter(Boolean)
+    :(subjectsRaw.data||[]);
   const cOpts=classes.map(c=>`<option value="${c.id}" data-n="${c.name}${c.arm?' '+c.arm:''}">${c.name}${c.arm?' '+c.arm:''}</option>`).join('');
   const sOpts=subjects.map(s=>`<option value="${s.id}" data-n="${s.name}">${s.name}</option>`).join('');
   setContent(`<div class="card" style="padding:22px;margin-bottom:20px;">
@@ -2497,14 +2514,14 @@ async function loadSheet(){
   if(!cid||!sid){toast('Select class and subject.','error');return;}
 
   // SECURITY: verify teacher has access to this class
-  if(ROLE==='teacher'){
+  if(ROLE==='teacher'||ROLE==='subject_teacher'){
     const{data:check}=await DB().from('teacher_classes').select('id').eq('teacher_id',UP?.id).eq('class_id',cid).single();
-    if(!check){toast('Access denied: You are not assigned to this class.','error');return;}
+    if(!check){toast('⛔ Access denied: You are not assigned to this class.','error');return;}
   }
   // SECURITY: verify teacher has access to this subject in this class
-  if(ROLE==='teacher'){
+  if(ROLE==='teacher'||ROLE==='subject_teacher'){
     const{data:sc}=await DB().from('teacher_subjects').select('id').eq('teacher_id',UP?.id).eq('subject_id',sid).single();
-    if(!sc){toast('Access denied: You are not assigned to this subject.','error');return;}
+    if(!sc){toast('⛔ Access denied: You are not assigned to this subject.','error');return;}
   }
   const cn=cSel.options[cSel.selectedIndex].dataset.n;
   const sn=sSel.options[sSel.selectedIndex].dataset.n;
@@ -3599,7 +3616,9 @@ async function executeSendCodes(examId){
               </div>
               <p><strong>Subject:</strong> ${exam?.subject_name||'—'}<br>
               <strong>Duration:</strong> ${exam?.duration_minutes} minutes<br>
-              <strong>Class:</strong> ${exam?.class_name||'—'}</p>
+              <strong>Class:</strong> ${exam?.class_name||'—'}<br>
+              <strong>Date/From:</strong> ${fromFmt}<br>
+              <strong>Closes:</strong> ${untilFmt}</p>
               <p>Log in with your <strong>Admission Number</strong> and this code on the CBT portal.</p>
               <p style="color:#ef4444;"><strong>⚠️ This code is personal. Do not share it.</strong></p>
               <p><em>${SCHOOL_SETTINGS.school_name}</em></p>`
@@ -4163,6 +4182,10 @@ async function startExam(examId,isAptitude=false,aptCode=null,aptCodeId=null){
 
   // ── 3. Block re-take — hard server-side check ─────────────────────────────
   if(!isAptitude&&ROLE==='student'){
+    // Fast local check first (survives even if DB upsert failed on prior submit)
+    if(localStorage.getItem('vis_cbt_done_'+examId+'_'+CU.id)==='1'){
+      toast('⛔ You have already submitted this exam and cannot retake it.','error');return;
+    }
     const{data:existSub}=await DB().from('cbt_submissions').select('id,submitted_at').eq('exam_id',examId).eq('student_id',CU.id).limit(1);
     if(existSub?.length){
       toast('⛔ You have already submitted this exam and cannot retake it.','error');
@@ -4442,6 +4465,8 @@ async function submitExam(examId, submitReason='Manual submission'){
     submission_reason:submitReason,
     auto_submitted:submitReason!=='Manual submission'
   },{onConflict:'exam_id,student_id'});
+  // Persist retake block locally — survives even if future DB read fails
+  try{localStorage.setItem('vis_cbt_done_'+examId+'_'+CU.id,'1');}catch(e){}
 
   // ── Mark aptitude code as used if applicable ──────────────────────────────
   if(UP?._aptitude_code_id){
@@ -7428,6 +7453,8 @@ async function confirmProfileEmailOTP(){
     }
     UP.email=newEmail;UP.email_verified=true;
   }
+  // ── Save to Supabase auth user_metadata — server-side, survives cache/localStorage clear ──
+  try{await DB().auth.updateUser({data:{email_verified:true,verified_email:newEmail}});}catch(e){}
   document.getElementById('pf-otp-wrap').style.display='none';
   toast('✅ Email verified successfully!');
   renderProfile();
@@ -8905,6 +8932,48 @@ async function initExamMedia(examId, durationMins){
   document.body.appendChild(pip);
   document.getElementById('cbt-vid').srcObject=stream;
 
+  // ── Capture verified face descriptor for periodic identity recheck ──
+  window._verifiedDescriptor=null;
+  setTimeout(async()=>{
+    try{
+      if(window.faceapi&&window._faceApiLoaded){
+        const vid2=document.getElementById('cbt-vid');
+        if(vid2){
+          const opts2=new faceapi.TinyFaceDetectorOptions({inputSize:224,scoreThreshold:0.35});
+          const res=await faceapi.detectSingleFace(vid2,opts2).withFaceLandmarks(true).withFaceDescriptor();
+          if(res) window._verifiedDescriptor=res.descriptor;
+        }
+      }
+    }catch(e){}
+  },3000);
+
+  // ── Periodic identity recheck every 45s ──
+  window._identRecheckInterval=setInterval(async()=>{
+    if(!window._examActive){clearInterval(window._identRecheckInterval);return;}
+    if(!window._verifiedDescriptor||!window.faceapi||!window._faceApiLoaded) return;
+    try{
+      const vid3=document.getElementById('cbt-vid');
+      if(!vid3) return;
+      const opts3=new faceapi.TinyFaceDetectorOptions({inputSize:224,scoreThreshold:0.35});
+      const live=await faceapi.detectSingleFace(vid3,opts3).withFaceLandmarks(true).withFaceDescriptor();
+      if(live){
+        const dist=faceapi.euclideanDistance(live.descriptor,window._verifiedDescriptor);
+        if(dist>0.60){
+          const name=(UP?.full_name||'Student').split(' ')[0];
+          window._identMismatch=(window._identMismatch||0)+1;
+          if(window._identMismatch===1){
+            toast('🚨 '+name+': Face identity mismatch! Ensure it is YOU in the camera.','error');
+            _speakWarning(name+', your face does not match the verified identity. Exam may be force-submitted.');
+          }else if(window._identMismatch>=2){
+            _forceExamSubmit('Identity mismatch — face no longer matches verified student');
+          }
+        } else {
+          window._identMismatch=0;
+        }
+      }
+    }catch(e){}
+  },45000);
+
   // Start look-away detection NOW that the video element exists
   _startLookAwayDetection(window._examId||'unknown');
 
@@ -9259,7 +9328,11 @@ function _startLookAwayDetection(examId){
       // ── Fallback: brightness-based detection ─────────────────────────
       const bigDrop=_prevBrightness!==null&&_prevBrightness>30&&brightness<15;
       const covered=brightness<12;
-      const isTooUniform=covered||brightness>248||bigDrop;
+      // Require 3 consecutive dark frames to avoid false triggers from blinks/shadows
+      window._darkFrames=(window._darkFrames||0);
+      if(covered||bigDrop) window._darkFrames++;
+      else window._darkFrames=0;
+      const isTooUniform=window._darkFrames>=3||brightness>248;
       if(isTooUniform){
         const now=Date.now();
         if(!_noFaceStart) _noFaceStart=now;
@@ -9484,7 +9557,7 @@ async function sendEmailDelivery({toEmail,toName,subject,bodyHtml,message}){
       to_email:toEmail,to_name:toName||'Parent/Guardian',
       school_name:schoolName,subject,
       body_html:bodyHtml||subject,
-      message:message||subject,
+      message:message||bodyHtml||subject,
       reply_email:SCHOOL_SETTINGS.reply_email||SCHOOL_SETTINGS.email||VIS_EMAIL
     });
     // Mark sent using the captured ID directly — no fragile search
@@ -11300,10 +11373,12 @@ async function verifyFaceAtExamStart(profileImageUrl){
           setTimeout(()=>runLiveness(),3500);
         }
       }catch(err){
-        // Fallback — do not block exam if face-api crashes
-        setCmd('VERIFIED &#10003; (fallback)','#22C55E');setDot(attempts,'ok');
-        setStatus('Verification completed. Starting exam…','#22C55E');
-        setTimeout(()=>{cleanup();fvResolveFn(true);},1200);
+        // face-api error — NEVER silently approve; retry or deny
+        if(attempts>=MAX_ATTEMPTS){hardDeny('Face detection error after '+MAX_ATTEMPTS+' attempts: '+err.message);return;}
+        setCmd('Detection error. Retry.','#EF4444');
+        setStatus('Face detection error. Ensure camera is unobstructed and try again.','#EF4444');
+        speak('Face detection error. Please try again.');
+        setTimeout(()=>runLiveness(),3000);
       }
     };// end runLiveness
 
@@ -11765,8 +11840,13 @@ async function renderClassHub(){
   let autoId=_hubCid;
   if(['teacher','subject_teacher'].includes(ROLE)&&!autoId){
     try{
-      const{data:tc}=await DB().from('teacher_classes').select('class_id').eq('teacher_id',UP?.id).limit(1);
-      autoId=tc?.[0]?.class_id||null;
+      if(ROLE==='subject_teacher'){
+        const{data:ts}=await DB().from('teacher_subjects').select('class_id').eq('teacher_id',UP?.id).limit(1);
+        autoId=ts?.[0]?.class_id||null;
+      } else {
+        const{data:tc}=await DB().from('teacher_classes').select('class_id').eq('teacher_id',UP?.id).limit(1);
+        autoId=tc?.[0]?.class_id||null;
+      }
     }catch(e){}
   }
   if(autoId){
@@ -12116,11 +12196,29 @@ async function hubEnterScores(){
 }
 async function hubLoadScoreEntry(){
   const subj=document.getElementById('hub-sc-subj')?.value;
+  const subjId=document.getElementById('hub-sc-subj')?.options[document.getElementById('hub-sc-subj')?.selectedIndex]?.dataset?.id;
   const term=document.getElementById('hub-sc-term')?.value;
   const sess=document.getElementById('hub-sc-sess')?.value;
   const area=document.getElementById('hub-score-entry-area');
   if(!subj){toast('Select a subject.','error');return;}
   if(!area) return;
+  // SECURITY: subject_teacher may only enter scores for assigned class+subject
+  if(ROLE==='subject_teacher'){
+    const{data:sc}=await DB().from('teacher_subjects').select('id')
+      .eq('teacher_id',UP?.id).eq('class_id',_hubCid).single();
+    if(!sc){
+      toast('⛔ You are not assigned to this class. Contact the administrator.','error');
+      area.innerHTML='';return;
+    }
+    if(subjId){
+      const{data:ss}=await DB().from('teacher_subjects').select('id')
+        .eq('teacher_id',UP?.id).eq('subject_id',subjId).eq('class_id',_hubCid).single();
+      if(!ss){
+        toast('⛔ You are not assigned to this subject in this class.','error');
+        area.innerHTML='';return;
+      }
+    }
+  }
   area.innerHTML='<div style="text-align:center;padding:16px;"><i class="fas fa-spinner fa-spin" style="color:var(--brl);"></i></div>';
   const[{data:students},{data:existing}]=await Promise.all([
     DB().from('students').select('id,full_name,admission_number').eq('class_id',_hubCid).order('full_name'),
