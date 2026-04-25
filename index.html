@@ -5291,7 +5291,7 @@ async function showFeeModal(){
 
     <!-- Student table area -->
     <div id="inv-students"
-      style="border:1.5px solid var(--crd);border-radius:12px;overflow:hidden;max-height:360px;overflow-y:auto;margin-bottom:16px;">
+      style="border:1.5px solid var(--crd);border-radius:12px;max-height:360px;overflow-y:auto;overflow-x:auto;margin-bottom:16px;-webkit-overflow-scrolling:touch;">
       <div style="text-align:center;padding:36px;color:var(--brl);">
         <i class="fas fa-arrow-up" style="display:block;font-size:18px;margin-bottom:8px;"></i>
         Select a class above to load students
@@ -5341,8 +5341,8 @@ async function invLoadStudents(){
   const feeMap={};
   (existing||[]).forEach(fp=>{ if(!feeMap[fp.student_id]) feeMap[fp.student_id]=fp; });
 
-  area.innerHTML=`
-  <table class="tbl" style="font-size:12.5px;">
+  area.innerHTML=`<div style="overflow-x:auto;-webkit-overflow-scrolling:touch;">
+  <table class="tbl" style="font-size:12.5px;min-width:650px;">
     <thead>
       <tr>
         <th style="width:36px;background:var(--cr);">
@@ -5408,7 +5408,7 @@ async function invLoadStudents(){
         </tr>`;
       }).join('')}
     </tbody>
-  </table>`;
+  </table></div>`;
   invUpdateCount();
   // Re-apply global settings if already filled
   invApplyGlobal();
@@ -5479,7 +5479,7 @@ async function saveInvoices(printAfter=false){
   const btn=document.getElementById('inv-save-btn');
   if(btn){ btn.innerHTML='<span class="spinner"></span> Saving…'; btn.disabled=true; }
 
-  let saved=0, errors=0;
+  let saved=0, errors=0, lastErr='';
   const savedIds=[];
 
   for(const row of checked){
@@ -5519,10 +5519,10 @@ async function saveInvoices(printAfter=false){
       .eq('session', sess)
       .eq('fee_type', ftype)
       .limit(1);
-    if(exErr){ errors++; console.error('Fee lookup:',exErr.message); continue; }
+    if(exErr){ console.warn('Fee lookup skipped (will attempt insert):',exErr.message); }
 
     let error;
-    if(ex?.length){
+    if(!exErr && ex?.length){
       ({error}=await DB().from('fee_payments').update(payload).eq('id',ex[0].id));
       if(!error) savedIds.push(ex[0].id);
     } else {
@@ -5530,10 +5530,10 @@ async function saveInvoices(printAfter=false){
       error=res.error;
       if(!error&&res.data?.length) savedIds.push(res.data[0].id);
     }
-    if(error){ errors++; console.error('Invoice save:',error.message,error.details||''); } else saved++;
+    if(error){ errors++; lastErr=error.message; toast('❌ Invoice error: '+error.message,'error'); console.error('Invoice save:',error.message,error.details||''); } else saved++;
   }
 
-  if(errors) toast(`⚠️ ${saved} saved, ${errors} failed.`,'error');
+  if(errors) toast(`⚠️ ${saved} saved, ${errors} failed. ${lastErr?'Error: '+lastErr:''}`,'error');
   else       toast(`✅ ${saved} invoice${saved!==1?'s':''} created!`);
 
   closeModal();
@@ -5931,11 +5931,7 @@ async function _genFeePDFFromRow(p,type){
     pdf.setFontSize(6.5);pdf.setTextColor(160,140,130);
     pdf.text('OFFICIAL STAMP',W-41,y+10,{align:'center'});
   }
-  // Bursar line below stamp area
-  pdf.setDrawColor(130,110,100);pdf.setLineWidth(0.25);
-  pdf.line(W-70,y+12,W-18,y+12);
-  pdf.setFontSize(6.5);pdf.setTextColor(130,110,100);pdf.setFont('helvetica','normal');
-  pdf.text('Bursar / Cashier',W-44,y+17,{align:'center'});
+  // Stamp only — no bursar line
 
   const fname='VIS_'+(isReceipt?'Receipt':'Invoice')+'_'+(p.admission_number||'student')+'_'+(p.term||'').replace(/ /g,'')+'.pdf';
   pdf.save(fname);
@@ -6227,7 +6223,7 @@ async function saveBulkCashPayments(){
       if(error) errors++;else saved++;
     }
   }
-  if(errors) toast(`⚠️ ${saved} saved, ${errors} failed.`,'error');
+  if(errors) toast(`⚠️ ${saved} saved, ${errors} failed. ${lastErr?'Error: '+lastErr:''}`,'error');
   else toast(`✅ ${saved} payment(s) recorded!`);
   closeModal();
   await loadFinanceTable();
