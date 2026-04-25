@@ -7436,7 +7436,7 @@ async function confirmProfileEmailOTP(){
   const table=ROLE==='student'?'students':'profiles';
   if(ROLE==='student'){
     // students table may not have email_verified column — update email only
-    const{error}=await DB().from('students').update({email:newEmail}).eq('id',UP?.id);
+    const{error}=await DB().from('students').update({email:newEmail, email_verified:true}).eq('id',UP?.id);
     if(error){toast('❌ Error: '+error.message,'error');return;}
     localStorage.setItem('vis_ev_'+UP?.id,'1');
     UP.email=newEmail;UP.email_verified=true;
