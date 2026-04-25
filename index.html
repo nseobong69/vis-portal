@@ -11190,30 +11190,69 @@ async function sendBulkEmails(){
 
 // ═══════════════════════════════════════════════════════
 // FACE VERIFICATION AT EXAM START (Issues 6 & 15)
-// Uses face-api.js — loaded deferred in <head>
-// ═══════════════════════════════════════════════════════
+// Uses face-api.js loaded deferred in head
+// =============================================
 let _faceApiLoaded=false;
+let _faceApiPrewarmPromise=null;
+
+// Pre-warm: begin loading models in background immediately.
+// Caches the promise so repeated calls never double-load.
+function _prewarmFaceApi(){
+  if(_faceApiLoaded) return Promise.resolve(true);
+  if(_faceApiPrewarmPromise) return _faceApiPrewarmPromise;
+  _faceApiPrewarmPromise=(async()=>{
+    // Wait up to 15s for deferred script to become available
+    if(!window.faceapi){
+      for(let i=0;i<30;i++){
+        await new Promise(r=>setTimeout(r,500));
+        if(window.faceapi) break;
+      }
+      if(!window.faceapi){
+        console.warn('[FaceAPI] Script never became available.');
+        _faceApiPrewarmPromise=null;
+        return false;
+      }
+    }
+    // Try jsDelivr first, then unpkg as fallback
+    const CDNS=[
+      'https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/weights',
+      'https://unpkg.com/face-api.js@0.22.2/weights',
+    ];
+    for(const MODEL_URL of CDNS){
+      try{
+        await Promise.all([
+          faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+          faceapi.nets.faceLandmark68TinyNet.loadFromUri(MODEL_URL),
+          faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
+        ]);
+        _faceApiLoaded=true;
+        window._faceApiLoaded=true;
+        console.info('[FaceAPI] Models loaded OK from',MODEL_URL);
+        return true;
+      }catch(e){
+        console.warn('[FaceAPI] CDN failed:',MODEL_URL,e.message||e);
+      }
+    }
+    _faceApiPrewarmPromise=null; // allow retry next attempt
+    return false;
+  })();
+  return _faceApiPrewarmPromise;
+}
+
 async function _ensureFaceApi(){
   if(_faceApiLoaded) return true;
-  // FIX A: Poll up to 10s for deferred script to finish loading before giving up
-  if(!window.faceapi){
-    for(let i=0;i<20;i++){
-      await new Promise(r=>setTimeout(r,500));
-      if(window.faceapi) break;
-    }
-    if(!window.faceapi) return false;
+  return _prewarmFaceApi();
+}
+
+// Wait until video has actual frames before handing to face-api
+async function _waitForVideo(vid,timeoutMs=5000){
+  if(!vid) return false;
+  const t=Date.now();
+  while(vid.readyState<2||vid.videoWidth===0){
+    if(Date.now()-t>timeoutMs) return false;
+    await new Promise(r=>setTimeout(r,120));
   }
-  try{
-    const MODEL_URL='https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/weights';
-    await Promise.all([
-      faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
-      faceapi.nets.faceLandmark68TinyNet.loadFromUri(MODEL_URL),
-      faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
-    ]);
-    _faceApiLoaded=true;
-    window._faceApiLoaded=true; // FIX B: sync window scope so look-away detector activates
-    return true;
-  }catch(e){return false;}
+  return true;
 }
 
 async function verifyFaceAtExamStart(profileImageUrl){
@@ -11337,7 +11376,16 @@ async function verifyFaceAtExamStart(profileImageUrl){
       speak('Hold still. Scanning now.');
       await new Promise(r=>setTimeout(r,700));
 
-      // ── FIX 1: face-api REQUIRED — brightness bypass removed ──────────────
+      // Ensure video has real frames before passing to face-api
+      const vidReady=await _waitForVideo(vid,4000);
+      if(!vidReady){
+        setStatus('Camera not ready. Please wait and retry.','#EF4444');
+        speak('Camera is not ready. Please wait a moment and try again.');
+        setTimeout(()=>runLiveness(),3000);
+        return;
+      }
+
+      // ── face-api REQUIRED ──────────────
       if(!faceApiReady||!window.faceapi){
         setStatus('Loading face detection models…','#D97706');
         await new Promise(r=>setTimeout(r,2500));
@@ -13557,6 +13605,9 @@ window.addEventListener('DOMContentLoaded',async()=>{
   const ejsKey=SCHOOL_SETTINGS?.emailjs_public_key||'YOUR_EMAILJS_PUBLIC_KEY';
   window.emailjs.init(ejsKey);
 }
+  // Pre-warm face-api models in background so they are ready when exam starts
+  setTimeout(_prewarmFaceApi, 2000);
+
   // Preload school settings for login page branding
   (async()=>{
     try{
