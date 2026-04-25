@@ -92,8 +92,7 @@ body.dark .tbl tr:hover td{background:#3E2723;}
 }
 .vis-avatar-img{width:100%;height:100%;object-fit:cover;border-radius:inherit;}
 .vis-logo-img{object-fit:contain;border-radius:inherit;}
-#cbt-video-pip{position:fixed;top:70px;right:14px;width:160px;height:115px;border-radius:12px;border:2px solid var(--br);z-index:500;background:#000;overflow:hidden;box-shadow:0 4px 18px rgba(0,0,0,.3);}
-#cbt-video-pip video{width:100%;height:100%;object-fit:cover;}
+#cbt-video-pip{position:fixed;top:70px;right:14px;width:240px;height:100px;border-radius:12px;z-index:500;background:#000;overflow:hidden;box-shadow:0 4px 18px rgba(0,0,0,.35);display:flex;}
 #cbt-noise-warn{position:fixed;top:200px;right:14px;width:180px;background:#EF4444;color:#fff;padding:10px 14px;border-radius:11px;font-size:12.5px;font-weight:700;z-index:501;display:none;text-align:center;}
 .profile-pic-wrap{position:relative;width:90px;height:90px;border-radius:18px;overflow:hidden;cursor:pointer;border:3px dashed var(--brl);}
 .profile-pic-wrap:hover{border-color:var(--br);}
@@ -8875,16 +8874,65 @@ async function initExamMedia(examId, durationMins){
     return;
   }
   window._examStream=stream;
-  // Create video PiP
+  // ── Dual monitor box: [Verified Snap] [Live Camera] ──────────────────────
   const pip=document.createElement('div');
   pip.id='cbt-video-pip';
-  pip.innerHTML=`<video autoplay muted playsinline id="cbt-vid" style="width:100%;height:100%;object-fit:cover;"></video>
-    <div style="position:absolute;bottom:4px;left:0;right:0;text-align:center;font-size:9px;font-weight:700;color:#fff;background:rgba(0,0,0,.4);padding:2px;">🔴 LIVE</div>`;
+  const snapSrc=window._verifiedFaceSnapBlob||window._verifiedFaceSnapUrl||'';
+  const snapHtml=snapSrc
+    ?`<img id="cbt-verified-snap" src="${snapSrc}" style="width:100%;height:100%;object-fit:cover;display:block;">`
+    :`<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:#1a1a1a;color:#666;font-size:10px;text-align:center;padding:4px;">No<br>Photo</div>`;
+  pip.innerHTML=`
+    <div style="display:flex;gap:4px;width:100%;height:100%;">
+      <div style="flex:1;position:relative;border-radius:8px;overflow:hidden;border:2px solid #5D4037;">
+        ${snapHtml}
+        <div style="position:absolute;bottom:0;left:0;right:0;text-align:center;font-size:8px;font-weight:700;color:#fff;background:rgba(93,64,55,.75);padding:2px;">✅ VERIFIED</div>
+      </div>
+      <div style="flex:1;position:relative;border-radius:8px;overflow:hidden;border:2px solid #22C55E;">
+        <video autoplay muted playsinline id="cbt-vid" style="width:100%;height:100%;object-fit:cover;transform:scaleX(-1);"></video>
+        <div style="position:absolute;bottom:0;left:0;right:0;text-align:center;font-size:8px;font-weight:700;color:#fff;background:rgba(0,0,0,.5);padding:2px;">🔴 LIVE</div>
+      </div>
+    </div>`;
   document.body.appendChild(pip);
   document.getElementById('cbt-vid').srcObject=stream;
 
   // Start look-away detection NOW that the video element exists
   _startLookAwayDetection(window._examId||'unknown');
+
+  // ── 3-second face identity re-match loop ─────────────────────────────────
+  // Runs independently of look-away detection — checks if the SAME verified
+  // person is still on camera every 3 seconds; auto-submits on 2nd mismatch.
+  window._faceSwapCount=0;
+  window._faceMatchInterval=setInterval(async()=>{
+    if(!window._examActive){clearInterval(window._faceMatchInterval);window._faceMatchInterval=null;return;}
+    if(!window._verifiedFaceDescriptor||!window.faceapi||!window._faceApiLoaded) return;
+    const v=document.getElementById('cbt-vid');
+    if(!v||v.readyState<2) return;
+    try{
+      const opts=new faceapi.TinyFaceDetectorOptions({inputSize:160,scoreThreshold:0.3});
+      const live=await faceapi.detectSingleFace(v,opts).withFaceLandmarks(true).withFaceDescriptor();
+      if(!live) return; // no face — handled by look-away detector
+      const dist=faceapi.euclideanDistance(live.descriptor,window._verifiedFaceDescriptor);
+      const name=(UP?.full_name||'Student').split(' ')[0];
+      if(dist>0.60){
+        window._faceSwapCount=(window._faceSwapCount||0)+1;
+        if(window._faceSwapCount===1){
+          toast('⚠️ '+name+': Unrecognised face detected! Switch back immediately.','error');
+          _speakWarning(name+', this face does not match the verified identity. Please face the camera now.');
+          // Flash the LIVE box red briefly
+          const liveBox=document.querySelector('#cbt-video-pip div:last-child');
+          if(liveBox){liveBox.style.border='3px solid #EF4444';setTimeout(()=>{liveBox.style.border='2px solid #22C55E';},3000);}
+        } else if(window._faceSwapCount>=2){
+          clearInterval(window._faceMatchInterval);window._faceMatchInterval=null;
+          _forceExamSubmit('Different face detected — identity mismatch (dist='+dist.toFixed(2)+')');
+        }
+      } else {
+        window._faceSwapCount=0; // reset on good match
+        // Flash the LIVE box green briefly to confirm match
+        const liveBox=document.querySelector('#cbt-video-pip div:last-child');
+        if(liveBox&&window._faceSwapCount===0){liveBox.style.borderColor='#22C55E';}
+      }
+    }catch(e){}
+  },3000);
 
   // Create noise warn element
   const nw=document.createElement('div');
@@ -8963,6 +9011,7 @@ async function takeExamSnap(examId,stream){
   }catch(e){} // Silent fail — never interrupt the exam
 }
 function detachExamMedia(){
+  if(window._faceMatchInterval){clearInterval(window._faceMatchInterval);window._faceMatchInterval=null;}
   if(window._examStream){window._examStream.getTracks().forEach(t=>t.stop());window._examStream=null;}
   if(window._examAudioCtx){window._examAudioCtx.close().catch(()=>{});window._examAudioCtx=null;}
   if(window._noiseInterval){clearInterval(window._noiseInterval);window._noiseInterval=null;}
@@ -9225,30 +9274,8 @@ async function _startLookAwayDetection(examId){
               },1000);
             }
           } else {
-            // Face present — FIX 2: verify it's still the SAME person who was verified
+            // Face present — 3-second identity re-match handled by dedicated interval below
             _resetNoFace();
-            if(window._verifiedFaceDescriptor&&!window._idCheckCooldown){
-              window._idCheckCooldown=true;
-              setTimeout(()=>{window._idCheckCooldown=false;},4000);
-              try{
-                const live=await faceapi.detectSingleFace(vid,new faceapi.TinyFaceDetectorOptions({inputSize:160,scoreThreshold:0.3})).withFaceLandmarks(true).withFaceDescriptor();
-                if(live){
-                  const dist=faceapi.euclideanDistance(live.descriptor,window._verifiedFaceDescriptor);
-                  if(dist>0.60){
-                    window._faceSwapCount=(window._faceSwapCount||0)+1;
-                    const name=(UP?.full_name||'Student').split(' ')[0];
-                    if(window._faceSwapCount===1){
-                      toast('⚠️ '+name+': Unrecognised face! Switch back immediately.','error');
-                      _speakWarning(name+', this face does not match your verified identity. Return to camera now.');
-                    } else if(window._faceSwapCount>=2){
-                      _forceExamSubmit('Different face during exam — identity mismatch (dist='+dist.toFixed(2)+')');
-                    }
-                  } else {
-                    window._faceSwapCount=0;
-                  }
-                }
-              }catch(e){}
-            }
           }
           return;
         }catch(e){/* fall through to brightness check */}
@@ -11256,6 +11283,20 @@ async function verifyFaceAtExamStart(profileImageUrl){
           speak('Identity confirmed. Starting your exam.');
           window._verifiedFaceDescriptor=liveResult.descriptor;
           window._faceApiLoaded=true;
+          // Capture verified face → compress <40KB → upload
+          try{
+            const capCanvas=document.createElement('canvas');
+            capCanvas.width=240;capCanvas.height=240;
+            const capCtx=capCanvas.getContext('2d');
+            capCtx.save();capCtx.scale(-1,1);capCtx.drawImage(vid,-240,0,240,240);capCtx.restore();
+            let q=0.55,capBlob=await new Promise(r=>capCanvas.toBlob(r,'image/jpeg',q));
+            while(capBlob&&capBlob.size>40*1024&&q>0.1){q-=0.1;capBlob=await new Promise(r=>capCanvas.toBlob(r,'image/jpeg',q));}
+            if(capBlob&&capBlob.size<=40*1024){
+              const capUrl=await uploadToCloudinary(capBlob,`vis/cbt/verified/${CU?.id||'guest'}`);
+              window._verifiedFaceSnapUrl=capUrl;
+              window._verifiedFaceSnapBlob=URL.createObjectURL(capBlob);
+            }
+          }catch(e){}
           setTimeout(()=>{cleanup();fvResolveFn(true);},1600);
           return;
         }
@@ -11290,8 +11331,27 @@ async function verifyFaceAtExamStart(profileImageUrl){
           setStatus('Welcome! Starting exam now…','#22C55E');
           const firstName=(UP?.full_name||'Student').split(' ')[0];
           speak('Identity confirmed. Welcome '+firstName+'. Starting your exam now.');
-          window._verifiedFaceDescriptor=liveResult.descriptor;// FIX 2: store for in-exam check
+          window._verifiedFaceDescriptor=liveResult.descriptor;
           window._faceApiLoaded=true;
+          // ── Capture verified face frame → compress <40KB → upload to Cloudinary ──
+          try{
+            const capCanvas=document.createElement('canvas');
+            capCanvas.width=240;capCanvas.height=240;
+            const capCtx=capCanvas.getContext('2d');
+            capCtx.save();capCtx.scale(-1,1);capCtx.drawImage(vid,-240,0,240,240);capCtx.restore();
+            let quality=0.55;
+            let capBlob=await new Promise(r=>capCanvas.toBlob(r,'image/jpeg',quality));
+            // Compress until <40KB
+            while(capBlob&&capBlob.size>40*1024&&quality>0.1){
+              quality-=0.1;
+              capBlob=await new Promise(r=>capCanvas.toBlob(r,'image/jpeg',quality));
+            }
+            if(capBlob&&capBlob.size<=40*1024){
+              const capUrl=await uploadToCloudinary(capBlob,`vis/cbt/verified/${CU?.id||'guest'}`);
+              window._verifiedFaceSnapUrl=capUrl;
+              window._verifiedFaceSnapBlob=URL.createObjectURL(capBlob);
+            }
+          }catch(e){}
           setTimeout(()=>{cleanup();fvResolveFn(true);},2000);
         }else{
           if(attempts>=MAX_ATTEMPTS){
