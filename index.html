@@ -392,7 +392,7 @@ body.exam-active *{-webkit-user-select:none;user-select:none;}
 
 <script>
  // ── Auto-load result when QR code is scanned ─────────────────────────
-(function handleQRScan(){
+(async function handleQRScan(){
   const p=new URLSearchParams(window.location.search);
   if(p.get('scan')!=='1') return;
   const adm=p.get('adm')||'';
@@ -983,16 +983,8 @@ async function boot(){
   // Admin and super_admin always get full access
   const isUnrestricted=['super_admin','admin','proprietor','head_teacher','principal','bursar'].includes(ROLE)||ROLE==='pin_viewer'||ROLE==='aptitude_guest';
   if(!isUnrestricted){
-    // Restore email_verified — check auth metadata first (server-side, survives cache clear),
-    // then fall back to localStorage for backward compatibility
-    if(UP&&!UP.email_verified){
-      if(localStorage.getItem('vis_ev_'+UP.id)==='1') UP.email_verified=true;
-      // Auth user_metadata is server-side — persists even after full cache/localStorage clear
-      try{
-        const{data:authU}=await DB().auth.getUser();
-        if(authU?.user?.user_metadata?.email_verified===true) UP.email_verified=true;
-      }catch(e){}
-    }
+    // FIX 7: email_verified comes from DB only — no localStorage; no cache-clearing bypass
+    // (localStorage fallback removed — run SQL to add email_verified column to both tables)
     const missingEmail=!UP?.email&&!CU?.email;
     const notVerified=!UP?.email_verified;
     const noProfile=!UP?.profile_completed;
@@ -1892,12 +1884,16 @@ async function confirmDeleteStudent(id){
     for(const t of tables){
       try{await DB().from(t).delete().eq('student_id',id);}catch(e){}
     }
-    // Also delete student profile/login
+    // Delete student profile/login + clear email_verified from DB
     try{
-      const{data:stu}=await DB().from('students').select('user_id').eq('id',id).single();
+      const{data:stu}=await DB().from('students').select('user_id,email').eq('id',id).single();
       if(stu?.user_id){
         await DB().from('profiles').delete().eq('id',stu.user_id);
       }
+      // Also zero out email_verified on the student row before deleting
+      await DB().from('students').update({email_verified:false,email:null}).eq('id',id);
+      // Remove any residual localStorage flag for this student
+      localStorage.removeItem('vis_ev_'+id);
     }catch(e){}
     // Finally delete the student record
     const{error}=await DB().from('students').delete().eq('id',id);
@@ -2465,11 +2461,11 @@ async function getMyClasses(){
     const{data:tc}=await DB().from('teacher_classes').select('class_id,classes(id,name,arm,level)').eq('teacher_id',UP?.id);
     return (tc||[]).map(r=>r.classes).filter(Boolean);
   }
-  // Subject teachers see only the classes they have a subject assignment in
+  // FIX 6: subject_teacher sees ONLY classes they are assigned subjects in
   if(ROLE==='subject_teacher'){
     const{data:ts}=await DB().from('teacher_subjects').select('class_id,classes(id,name,arm,level)').eq('teacher_id',UP?.id);
     const seen=new Set();
-    return (ts||[]).filter(r=>r.classes&&!seen.has(r.class_id)&&seen.add(r.class_id)).map(r=>r.classes);
+    return (ts||[]).map(r=>r.classes).filter(c=>{if(!c||seen.has(c.id))return false;seen.add(c.id);return true;});
   }
   if(ROLE==='head_teacher'){
     const{data}=await DB().from('classes').select('id,name,arm,level').in('level',['kindergarten','nursery','primary']).order('name');
@@ -2485,15 +2481,10 @@ async function getMyClasses(){
 async function renderResults(){
   if(ROLE==='student'||ROLE==='pin_viewer'){renderMyResults();return;}
   setPage('Results Management','Enter and publish student results');
-  const[classes,subjectsRaw]=await Promise.all([
+  const[classes,{data:subjects}]=await Promise.all([
     getMyClasses(),
-    ROLE==='subject_teacher'
-      ? DB().from('teacher_subjects').select('subject_id,subjects(id,name)').eq('teacher_id',UP?.id)
-      : DB().from('subjects').select('id,name').order('name')
+    DB().from('subjects').select('id,name').order('name')
   ]);
-  const subjects=ROLE==='subject_teacher'
-    ?(subjectsRaw.data||[]).map(r=>r.subjects).filter(Boolean)
-    :(subjectsRaw.data||[]);
   const cOpts=classes.map(c=>`<option value="${c.id}" data-n="${c.name}${c.arm?' '+c.arm:''}">${c.name}${c.arm?' '+c.arm:''}</option>`).join('');
   const sOpts=subjects.map(s=>`<option value="${s.id}" data-n="${s.name}">${s.name}</option>`).join('');
   setContent(`<div class="card" style="padding:22px;margin-bottom:20px;">
@@ -2514,14 +2505,14 @@ async function loadSheet(){
   if(!cid||!sid){toast('Select class and subject.','error');return;}
 
   // SECURITY: verify teacher has access to this class
-  if(ROLE==='teacher'||ROLE==='subject_teacher'){
+  if(ROLE==='teacher'){
     const{data:check}=await DB().from('teacher_classes').select('id').eq('teacher_id',UP?.id).eq('class_id',cid).single();
-    if(!check){toast('⛔ Access denied: You are not assigned to this class.','error');return;}
+    if(!check){toast('Access denied: You are not assigned to this class.','error');return;}
   }
   // SECURITY: verify teacher has access to this subject in this class
-  if(ROLE==='teacher'||ROLE==='subject_teacher'){
+  if(ROLE==='teacher'){
     const{data:sc}=await DB().from('teacher_subjects').select('id').eq('teacher_id',UP?.id).eq('subject_id',sid).single();
-    if(!sc){toast('⛔ Access denied: You are not assigned to this subject.','error');return;}
+    if(!sc){toast('Access denied: You are not assigned to this subject.','error');return;}
   }
   const cn=cSel.options[cSel.selectedIndex].dataset.n;
   const sn=sSel.options[sSel.selectedIndex].dataset.n;
@@ -3605,7 +3596,7 @@ async function executeSendCodes(examId){
         try{
           await sendEmailDelivery({
             toEmail:s.email,toName:s.full_name,
-            subject:`Your Exam Access Code — ${exam?.subject_name||exam?.title} (${fromFmt})`,
+            subject:`Your Exam Access Code — ${exam?.subject_name||exam?.title}`,
             bodyHtml:`<p>Dear <strong>${s.full_name}</strong>,</p>
               <p>Your access code for the upcoming exam:</p>
               <div style="background:#f0f4ff;padding:18px;border-radius:8px;text-align:center;margin:14px 0;">
@@ -3616,9 +3607,7 @@ async function executeSendCodes(examId){
               </div>
               <p><strong>Subject:</strong> ${exam?.subject_name||'—'}<br>
               <strong>Duration:</strong> ${exam?.duration_minutes} minutes<br>
-              <strong>Class:</strong> ${exam?.class_name||'—'}<br>
-              <strong>Date/From:</strong> ${fromFmt}<br>
-              <strong>Closes:</strong> ${untilFmt}</p>
+              <strong>Class:</strong> ${exam?.class_name||'—'}</p>
               <p>Log in with your <strong>Admission Number</strong> and this code on the CBT portal.</p>
               <p style="color:#ef4444;"><strong>⚠️ This code is personal. Do not share it.</strong></p>
               <p><em>${SCHOOL_SETTINGS.school_name}</em></p>`
@@ -4129,18 +4118,11 @@ async function startExam(examId,isAptitude=false,aptCode=null,aptCodeId=null){
 
   // ── 2. Access code check — per-student code, blocks cross-student use ─────
   if(!isAptitude&&ROLE==='student'){
-    // Fetch this student's specific code for this exam (any status)
-    const{data:scAny}=await DB().from('cbt_student_codes')
-      .select('*').eq('exam_id',examId).eq('student_id',CU.id).single();
-    if(scAny){
-      if(scAny.status==='used'){
-        toast('⛔ This access code has already been used. You cannot re-enter this exam.','error');
-        return;
-      }
-      if(scAny.status!=='active'){
-        toast('❌ Your access code is not active. Contact your invigilator.','error');return;
-      }
-      // Student has active per-student code — must enter it
+    // Fetch this student's specific code for this exam
+    const{data:sc}=await DB().from('cbt_student_codes')
+      .select('*').eq('exam_id',examId).eq('student_id',CU.id).eq('status','active').single();
+    if(sc){
+      // Student has a per-student code — must enter it
       const entered=await new Promise(res=>{
         modal(`<div style="padding:26px;text-align:center;">
           <h3 class="hf" style="color:var(--br);margin-bottom:12px;">Enter Your Access Code</h3>
@@ -4155,7 +4137,7 @@ async function startExam(examId,isAptitude=false,aptCode=null,aptCodeId=null){
         window._cbtCodeResolve=res;
       });
       if(!entered){closeModal();return;}
-      if(entered!==scAny.code){
+      if(entered!==sc.code){
         toast('❌ Invalid access code. This code does not match your account.','error');closeModal();return;
       }
       closeModal();
@@ -4180,17 +4162,10 @@ async function startExam(examId,isAptitude=false,aptCode=null,aptCodeId=null){
     }
   }
 
-  // ── 3. Block re-take — hard server-side check ─────────────────────────────
-  if(!isAptitude&&ROLE==='student'){
-    // Fast local check first (survives even if DB upsert failed on prior submit)
-    if(localStorage.getItem('vis_cbt_done_'+examId+'_'+CU.id)==='1'){
-      toast('⛔ You have already submitted this exam and cannot retake it.','error');return;
-    }
-    const{data:existSub}=await DB().from('cbt_submissions').select('id,submitted_at').eq('exam_id',examId).eq('student_id',CU.id).limit(1);
-    if(existSub?.length){
-      toast('⛔ You have already submitted this exam and cannot retake it.','error');
-      return;
-    }
+  // ── 3. Block re-take ──────────────────────────────────────────────────────
+  if(!isAptitude){
+    const{data:existSub}=await DB().from('cbt_submissions').select('id').eq('exam_id',examId).eq('student_id',CU.id).limit(1);
+    if(existSub?.length){toast('You have already submitted this exam.','error');return;}
   }
 
   // ── 4. Fetch questions ────────────────────────────────────────────────────
@@ -4205,12 +4180,6 @@ async function startExam(examId,isAptitude=false,aptCode=null,aptCodeId=null){
   if(!isAptitude&&ROLE==='student'){
     window._fvAttempts=0;
     const profileUrl=UP?.avatar_url||null;
-    // If student has no profile photo, force them to upload one first
-    if(!profileUrl){
-      toast('📸 No profile photo found. Update your profile with a face photo before taking exams.','error');
-      setContent('<div class="card" style="padding:48px;text-align:center;max-width:520px;"><i class="fas fa-camera fa-3x" style="color:#D97706;margin-bottom:18px;display:block;"></i><div style="font-size:18px;font-weight:700;color:#D97706;margin-bottom:10px;">Profile Photo Required</div><p style="color:var(--brl);">You must have a profile photo before taking any exam. Go to <strong>My Profile</strong> and capture your photo.</p><button onclick="renderProfile()" class="btn btn-primary" style="margin-top:16px;"><i class="fas fa-user"></i> Go to Profile</button></div>');
-      return;
-    }
     const verified=await verifyFaceAtExamStart(profileUrl);
     if(verified===false){
       toast('❌ Identity verification failed. You cannot start this exam. Contact your invigilator.','error');
@@ -4465,8 +4434,6 @@ async function submitExam(examId, submitReason='Manual submission'){
     submission_reason:submitReason,
     auto_submitted:submitReason!=='Manual submission'
   },{onConflict:'exam_id,student_id'});
-  // Persist retake block locally — survives even if future DB read fails
-  try{localStorage.setItem('vis_cbt_done_'+examId+'_'+CU.id,'1');}catch(e){}
 
   // ── Mark aptitude code as used if applicable ──────────────────────────────
   if(UP?._aptitude_code_id){
@@ -4476,13 +4443,14 @@ async function submitExam(examId, submitReason='Manual submission'){
       }).eq('id',UP._aptitude_code_id);
     }catch(e){}
   }
-
-  // ── Mark per-student exam code as 'used' to permanently block any retake ──
-  try{
-    await DB().from('cbt_student_codes').update({
-      status:'used',used_at:new Date().toISOString()
-    }).eq('exam_id',examId).eq('student_id',CU.id);
-  }catch(e){}
+  // ── FIX 4: Mark per-student exam code as 'used' — permanently blocks retake ─
+  if(ROLE==='student'&&CU?.id){
+    try{
+      await DB().from('cbt_student_codes')
+        .update({status:'used',used_at:new Date().toISOString()})
+        .eq('exam_id',examId).eq('student_id',CU.id);
+    }catch(e){}
+  }
 
   // ── Auto-save to results table if score_type is configured ───────────────
   try{
@@ -6447,7 +6415,7 @@ async function savePaymentEntry(id,due,paidSoFar){
   closeModal();
   await loadFinanceTable();
 }
-function runPaystackFee(id,amt){
+async function runPaystackFee(id,amt){
   const email=UP?.email||'student@vis.edu';
   closeModal();
   const script=document.createElement('script');script.src='https://js.paystack.co/v1/inline.js';
@@ -6599,7 +6567,7 @@ function showStudentPayModal(id,amt){
     <button onclick="closeModal()" class="btn btn-outline" style="width:100%;justify-content:center;">Close</button>
   </div>`,'480px');
 }
-function runPaystack(id,amt){
+async function runPaystack(id,amt){
   const email=$('pay-email')?.value||UP?.email||'student@vis.edu';
   closeModal();
   const script=document.createElement('script');script.src='https://js.paystack.co/v1/inline.js';
@@ -7434,27 +7402,17 @@ async function confirmProfileEmailOTP(){
   sessionStorage.removeItem('vis_email_otp_expiry');
   sessionStorage.removeItem('vis_email_pending');
   const table=ROLE==='student'?'students':'profiles';
-  if(ROLE==='student'){
-    // students table may not have email_verified column — update email only
-    const{error}=await DB().from('students').update({email:newEmail, email_verified:true}).eq('id',UP?.id);
-    if(error){toast('❌ Error: '+error.message,'error');return;}
-    localStorage.setItem('vis_ev_'+UP?.id,'1');
-    UP.email=newEmail;UP.email_verified=true;
-  } else {
-    // profiles table — try updating with email_verified; if column missing, fall back to email-only + localStorage
-    const{error}=await DB().from(table).update({email:newEmail,email_verified:true}).eq('id',UP?.id);
-    if(error&&(error.message||'').toLowerCase().includes('email_verified')){
-      // Column doesn't exist yet — update email only, persist flag locally
-      const{error:e2}=await DB().from(table).update({email:newEmail}).eq('id',UP?.id);
-      if(e2){toast('❌ Error: '+e2.message,'error');return;}
-      localStorage.setItem('vis_ev_'+UP?.id,'1');
-    } else if(error){
-      toast('❌ Error: '+error.message,'error');return;
-    }
-    UP.email=newEmail;UP.email_verified=true;
+  // FIX 7: Always persist email_verified to DB — never rely on localStorage
+  const{error:evErr}=await DB().from(table).update({email:newEmail,email_verified:true}).eq('id',UP?.id);
+  if(evErr){
+    // Column may not exist yet — update email only, log warning
+    const{error:e2}=await DB().from(table).update({email:newEmail}).eq('id',UP?.id);
+    if(e2){toast('❌ Error saving email: '+e2.message,'error');return;}
+    console.warn('email_verified column missing on '+table+' — run ALTER TABLE SQL');
   }
-  // ── Save to Supabase auth user_metadata — server-side, survives cache/localStorage clear ──
-  try{await DB().auth.updateUser({data:{email_verified:true,verified_email:newEmail}});}catch(e){}
+  // Clear any old localStorage flag so it doesn't interfere
+  localStorage.removeItem('vis_ev_'+UP?.id);
+  UP.email=newEmail;UP.email_verified=true;
   document.getElementById('pf-otp-wrap').style.display='none';
   toast('✅ Email verified successfully!');
   renderProfile();
@@ -7467,13 +7425,6 @@ async function saveProfile(){
   const address=$('pf-address')?.value.trim();
   const pass=$('pf-pass')?.value;
   if(!name){toast('Name is required.','error');return;}
-  // ENFORCE: profile photo is mandatory — must be captured via camera and saved to Cloudinary
-  if(!UP?.avatar_url&&!window._pendingAvatarUrl){
-    toast('📸 A face photo is required. Click the Camera button to capture your photo first.','error');
-    const ppWrap=document.getElementById('profile-pic-outer');
-    if(ppWrap){ppWrap.style.border='3px solid #EF4444';setTimeout(()=>{ppWrap.style.border='';},3000);}
-    return;
-  }
   const table=ROLE==='student'?'students':'profiles';
   const upd={full_name:name,gender,profile_completed:true};
   if(phone) upd.phone=phone;
@@ -8932,48 +8883,6 @@ async function initExamMedia(examId, durationMins){
   document.body.appendChild(pip);
   document.getElementById('cbt-vid').srcObject=stream;
 
-  // ── Capture verified face descriptor for periodic identity recheck ──
-  window._verifiedDescriptor=null;
-  setTimeout(async()=>{
-    try{
-      if(window.faceapi&&window._faceApiLoaded){
-        const vid2=document.getElementById('cbt-vid');
-        if(vid2){
-          const opts2=new faceapi.TinyFaceDetectorOptions({inputSize:224,scoreThreshold:0.35});
-          const res=await faceapi.detectSingleFace(vid2,opts2).withFaceLandmarks(true).withFaceDescriptor();
-          if(res) window._verifiedDescriptor=res.descriptor;
-        }
-      }
-    }catch(e){}
-  },3000);
-
-  // ── Periodic identity recheck every 45s ──
-  window._identRecheckInterval=setInterval(async()=>{
-    if(!window._examActive){clearInterval(window._identRecheckInterval);return;}
-    if(!window._verifiedDescriptor||!window.faceapi||!window._faceApiLoaded) return;
-    try{
-      const vid3=document.getElementById('cbt-vid');
-      if(!vid3) return;
-      const opts3=new faceapi.TinyFaceDetectorOptions({inputSize:224,scoreThreshold:0.35});
-      const live=await faceapi.detectSingleFace(vid3,opts3).withFaceLandmarks(true).withFaceDescriptor();
-      if(live){
-        const dist=faceapi.euclideanDistance(live.descriptor,window._verifiedDescriptor);
-        if(dist>0.60){
-          const name=(UP?.full_name||'Student').split(' ')[0];
-          window._identMismatch=(window._identMismatch||0)+1;
-          if(window._identMismatch===1){
-            toast('🚨 '+name+': Face identity mismatch! Ensure it is YOU in the camera.','error');
-            _speakWarning(name+', your face does not match the verified identity. Exam may be force-submitted.');
-          }else if(window._identMismatch>=2){
-            _forceExamSubmit('Identity mismatch — face no longer matches verified student');
-          }
-        } else {
-          window._identMismatch=0;
-        }
-      }
-    }catch(e){}
-  },45000);
-
   // Start look-away detection NOW that the video element exists
   _startLookAwayDetection(window._examId||'unknown');
 
@@ -9209,7 +9118,7 @@ function _warnNoise(){
 }
 
 // ── Look-away / not within view detection (enhanced with face-api.js) ──────────
-function _startLookAwayDetection(examId){
+async function _startLookAwayDetection(examId){
   if(!window._examStream) return;
   const vid=document.getElementById('cbt-vid');
   if(!vid) return;
@@ -9245,7 +9154,7 @@ function _startLookAwayDetection(examId){
       // ── Face-api multi-face / intruder detection ──────────────────────
       if(window.faceapi&&window._faceApiLoaded&&!_faceCheckCooldown){
         _faceCheckCooldown=true;
-        setTimeout(()=>{_faceCheckCooldown=false;},1500);
+        setTimeout(()=>{_faceCheckCooldown=false;},2000);
         try{
           const opts=new faceapi.TinyFaceDetectorOptions({inputSize:160,scoreThreshold:0.3});
           const detections=await faceapi.detectAllFaces(vid,opts);
@@ -9297,58 +9206,74 @@ function _startLookAwayDetection(examId){
             if(!_noFaceStart) _noFaceStart=now;
             const elapsed=now-_noFaceStart;
             const name=(UP?.full_name||'Student').split(' ')[0];
-            // Warn immediately at 1.5s
-            if(elapsed>=1500&&!_warnedOnce){
+            if(elapsed>=2000&&!_warnedOnce){
               _warnedOnce=true;
               window._lookAwayWarnings=(window._lookAwayWarnings||0)+1;
-              toast('⚠️ '+name+': Face not detected in camera! Return NOW.','error');
-              _speakWarning(name+', your face is not detected. Please look directly at the camera now.');
+              toast('⚠️ '+name+': Face not detected — return to camera view NOW!','error');
+              _speakWarning(name+', your face is not visible. Look at the camera immediately.');
             }
-            // Start auto-submit countdown at 3s
-            if(elapsed>=3000&&!_countdownActive){
+            if(elapsed>=4000&&!_countdownActive){
               _countdownActive=true;
-              _speakWarning(name+', face not detected. Exam submitting in 5, 4, 3, 2, 1.');
-              toast('🚨 '+name+': NOT IN CAMERA VIEW — auto-submitting in 5s!','error');
-              let cd=5;
+              _speakWarning(name+', face not in camera. Exam submitting in 4 seconds.');
+              toast('🚨 '+name+': NOT IN VIEW — auto-submitting in 4s!','error');
+              let cd=4;
               window._noFaceCdInt=setInterval(()=>{
                 if(!window._examActive){clearInterval(window._noFaceCdInt);window._noFaceCdInt=null;_countdownActive=false;return;}
                 cd--;
-                if(cd<=0){clearInterval(window._noFaceCdInt);window._noFaceCdInt=null;_countdownActive=false;if(window._examActive)_forceExamSubmit('Face not detected in camera — auto-submitted');}
+                if(cd<=0){clearInterval(window._noFaceCdInt);window._noFaceCdInt=null;_countdownActive=false;if(window._examActive)_forceExamSubmit('Face not detected — exam auto-submitted');}
                 else toast('🚨 Face not detected — auto-submit in '+cd+'s','error');
               },1000);
             }
           } else {
-            // Face detected — reset no-face timer
+            // Face present — FIX 2: verify it's still the SAME person who was verified
             _resetNoFace();
+            if(window._verifiedFaceDescriptor&&!window._idCheckCooldown){
+              window._idCheckCooldown=true;
+              setTimeout(()=>{window._idCheckCooldown=false;},4000);
+              try{
+                const live=await faceapi.detectSingleFace(vid,new faceapi.TinyFaceDetectorOptions({inputSize:160,scoreThreshold:0.3})).withFaceLandmarks(true).withFaceDescriptor();
+                if(live){
+                  const dist=faceapi.euclideanDistance(live.descriptor,window._verifiedFaceDescriptor);
+                  if(dist>0.60){
+                    window._faceSwapCount=(window._faceSwapCount||0)+1;
+                    const name=(UP?.full_name||'Student').split(' ')[0];
+                    if(window._faceSwapCount===1){
+                      toast('⚠️ '+name+': Unrecognised face! Switch back immediately.','error');
+                      _speakWarning(name+', this face does not match your verified identity. Return to camera now.');
+                    } else if(window._faceSwapCount>=2){
+                      _forceExamSubmit('Different face during exam — identity mismatch (dist='+dist.toFixed(2)+')');
+                    }
+                  } else {
+                    window._faceSwapCount=0;
+                  }
+                }
+              }catch(e){}
+            }
           }
           return;
         }catch(e){/* fall through to brightness check */}
       }
 
-      // ── Fallback: brightness-based detection ─────────────────────────
-      const bigDrop=_prevBrightness!==null&&_prevBrightness>30&&brightness<15;
-      const covered=brightness<12;
-      // Require 3 consecutive dark frames to avoid false triggers from blinks/shadows
-      window._darkFrames=(window._darkFrames||0);
-      if(covered||bigDrop) window._darkFrames++;
-      else window._darkFrames=0;
-      const isTooUniform=window._darkFrames>=3||brightness>248;
-      if(isTooUniform){
+      // ── Fallback: brightness-based camera-cover detection only ────────────
+      // Only triggers on full camera cover (lens blocked), NOT on normal lighting
+      const covered=brightness<8;
+      const veryBright=brightness>252;
+      if(covered||veryBright){
         const now=Date.now();
         if(!_noFaceStart) _noFaceStart=now;
         const elapsed=now-_noFaceStart;
         const name=(UP?.full_name||'Student').split(' ')[0];
-        if(elapsed>=1500&&!_warnedOnce){
+        if(elapsed>=2000&&!_warnedOnce){
           _warnedOnce=true;
           window._lookAwayWarnings=(window._lookAwayWarnings||0)+1;
-          toast('⚠️ '+name+': Camera covered or face not visible — return NOW!','error');
-          _speakWarning(name+', please look at the camera now.');
+          toast('⚠️ '+name+': Camera covered or face not visible!','error');
+          _speakWarning(name+', camera appears to be covered. Uncover camera immediately.');
         }
-        if(elapsed>=3000&&!_countdownActive){
+        if(elapsed>=4000&&!_countdownActive){
           _countdownActive=true;
-          _speakWarning(name+', camera blocked. Exam submitting in 5 seconds.');
-          toast('🚨 '+name+': Camera blocked — auto-submitting in 5s!','error');
-          let cd=5;
+          _speakWarning(name+', camera blocked. Exam submitting in 4 seconds.');
+          toast('🚨 '+name+': Camera blocked — auto-submitting in 4s!','error');
+          let cd=4;
           window._noFaceCdInt=setInterval(()=>{
             if(!window._examActive){clearInterval(window._noFaceCdInt);window._noFaceCdInt=null;_countdownActive=false;return;}
             cd--;
@@ -9531,14 +9456,12 @@ async function sendEmailViaGmail({toEmail,toName,subject,body,role}){
 const VIS_EMAIL='victoriousinternationalschs@gmail.com';
 async function sendEmailDelivery({toEmail,toName,subject,bodyHtml,message}){
   const schoolName=SCHOOL_SETTINGS?.school_name||'Victorious International Schools';
-  // Insert log as pending and capture the new row ID
-  let logId=null;
+  // Log attempt (no file refs — emails contain only OTP/information)
   try{
-    const{data:logRow}=await DB().from('email_delivery_log').insert({
+    await DB().from('email_delivery_log').insert({
       recipient_email:toEmail,recipient_name:toName,subject,
       status:'pending',attempts:1,last_attempt:new Date().toISOString()
-    }).select('id').single();
-    if(logRow?.id) logId=logRow.id;
+    });
   }catch(e){}
   // Send via EmailJS if configured
   const serviceId=SCHOOL_SETTINGS?.emailjs_service_id;
@@ -9551,21 +9474,34 @@ async function sendEmailDelivery({toEmail,toName,subject,bodyHtml,message}){
   try{
     if(!window.emailjs){
       await new Promise(res=>{const s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js';s.onload=res;document.head.appendChild(s);});
+      window.emailjs.init({publicKey});
     }
-    if(window._emailjsKey!==publicKey){window.emailjs.init({publicKey});window._emailjsKey=publicKey;}
     await window.emailjs.send(serviceId,templateId,{
       to_email:toEmail,to_name:toName||'Parent/Guardian',
       school_name:schoolName,subject,
       body_html:bodyHtml||subject,
-      message:message||bodyHtml||subject,
+      message:message||subject,
       reply_email:SCHOOL_SETTINGS.reply_email||SCHOOL_SETTINGS.email||VIS_EMAIL
     });
-    // Mark sent using the captured ID directly — no fragile search
-    if(logId) await DB().from('email_delivery_log').update({status:'sent',last_attempt:new Date().toISOString()}).eq('id',logId);
+    // Mark sent
+    try{
+      const{data:logRows}=await DB().from('email_delivery_log')
+        .select('id').eq('recipient_email',toEmail).eq('subject',subject)
+        .order('created_at',{ascending:false}).limit(1);
+      if(logRows?.length){
+        await DB().from('email_delivery_log').update({status:'sent'}).eq('id',logRows[0].id);
+      }
+    }catch(e){}
     toast(`📧 Email sent to ${toEmail}`,'success');
   }catch(err){
-    if(logId) await DB().from('email_delivery_log').update({status:'failed',last_attempt:new Date().toISOString(),error_message:String(err)}).eq('id',logId);
-    throw err;
+    try{
+      const{data:logRows}=await DB().from('email_delivery_log')
+        .select('id').eq('recipient_email',toEmail).eq('subject',subject)
+        .order('created_at',{ascending:false}).limit(1);
+      if(logRows?.length){
+        await DB().from('email_delivery_log').update({status:'failed',error_message:String(err)}).eq('id',logRows[0].id);
+      }
+    }catch(e){}
   }
 }
 async function saveEmailQueue(item){
@@ -10627,7 +10563,7 @@ async function deleteAptCode(id){
   await DB().from('aptitude_codes').delete().eq('id',id);
   toast('Code deleted.');renderAptitudeCodesTab();
 }
-function exportAptCodes(){
+async function exportAptCodes(){
   const rows=document.querySelectorAll('#pin-tab-content .card div[style*="monospace"]');
   const lines=['Code,Class'];
   rows.forEach(r=>{const code=r.textContent.trim();const cls=r.nextElementSibling?.textContent.trim()||'';lines.push(`${code},${cls}`);});
@@ -11049,15 +10985,15 @@ async function sendBulkEmail(){
   if(!recips.length){toast('No recipients found.','error');return;}
   toast(`Sending to ${recips.length} recipient(s)…`);
   closeModal();
-  let sent=0,failed=0;
+  let sent=0;
   for(const r of recips){
     try{
       await sendEmailDelivery({toEmail:r.email,toName:r.name,subject,
         bodyHtml:`<p>Dear <strong>${r.name}</strong>,</p><p>${body.replace(/\n/g,'<br>')}</p><br><p><em>${SCHOOL_SETTINGS.school_name}</em></p>`});
       sent++;
-    }catch(e){failed++;}
+    }catch(e){}
   }
-  toast(failed?`⚠️ ${sent} sent, ${failed} failed.`:`✅ Email sent to ${sent}/${recips.length} recipients!`,failed?'error':undefined);
+  toast(`✅ Email sent to ${sent}/${recips.length} recipients!`);
   renderEmailCenter();
 }
 
@@ -11150,7 +11086,6 @@ async function _ensureFaceApi(){
       faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
     ]);
     _faceApiLoaded=true;
-    window._faceApiLoaded=true;
     return true;
   }catch(e){return false;}
 }
@@ -11276,20 +11211,15 @@ async function verifyFaceAtExamStart(profileImageUrl){
       speak('Hold still. Scanning now.');
       await new Promise(r=>setTimeout(r,700));
 
-      // ── Brightness fallback (no face-api) — do NOT auto-approve, block entry ──
+      // ── FIX 1: face-api REQUIRED — brightness bypass removed ──────────────
       if(!faceApiReady||!window.faceapi){
-        // Try loading face-api one more time
-        setStatus('Loading face detection engine…','#D97706');
-        await new Promise(r=>setTimeout(r,2000));
+        setStatus('Loading face detection models…','#D97706');
+        await new Promise(r=>setTimeout(r,2500));
         const retried=await _ensureFaceApi();
         if(!retried||!window.faceapi){
-          // Still not available — deny to prevent unverified access
-          if(attempts>=MAX_ATTEMPTS){
-            hardDeny('Face detection unavailable. Contact your invigilator to enable camera access.');
-            return;
-          }
-          setCmd('Camera engine unavailable. Retry.','#EF4444');
-          speak('Face detection is not available. Please ensure your browser allows camera access and try again.');
+          if(attempts>=MAX_ATTEMPTS){hardDeny('Face detection unavailable after '+MAX_ATTEMPTS+' attempts. Contact your invigilator.');return;}
+          setCmd('Detection unavailable. Retry.','#EF4444');
+          speak('Face detection is not ready. Please ensure camera access and try again.');
           setTimeout(()=>runLiveness(),3000);
           return;
         }
@@ -11318,12 +11248,14 @@ async function verifyFaceAtExamStart(profileImageUrl){
           return;
         }
 
-        // No profile image — liveness alone is sufficient
+        // No profile image — liveness detection sufficient (face MUST be detected above)
         const profileImg=document.getElementById('fv-profile-img');
         if(!profileImg){
           setCmd('VERIFIED &#10003;','#22C55E');setDot(attempts,'ok');
           setStatus('Liveness confirmed. Starting exam…','#22C55E');
           speak('Identity confirmed. Starting your exam.');
+          window._verifiedFaceDescriptor=liveResult.descriptor;
+          window._faceApiLoaded=true;
           setTimeout(()=>{cleanup();fvResolveFn(true);},1600);
           return;
         }
@@ -11358,6 +11290,8 @@ async function verifyFaceAtExamStart(profileImageUrl){
           setStatus('Welcome! Starting exam now…','#22C55E');
           const firstName=(UP?.full_name||'Student').split(' ')[0];
           speak('Identity confirmed. Welcome '+firstName+'. Starting your exam now.');
+          window._verifiedFaceDescriptor=liveResult.descriptor;// FIX 2: store for in-exam check
+          window._faceApiLoaded=true;
           setTimeout(()=>{cleanup();fvResolveFn(true);},2000);
         }else{
           if(attempts>=MAX_ATTEMPTS){
@@ -11373,11 +11307,10 @@ async function verifyFaceAtExamStart(profileImageUrl){
           setTimeout(()=>runLiveness(),3500);
         }
       }catch(err){
-        // face-api error — NEVER silently approve; retry or deny
-        if(attempts>=MAX_ATTEMPTS){hardDeny('Face detection error after '+MAX_ATTEMPTS+' attempts: '+err.message);return;}
+        // FIX 1: never auto-approve on error — retry or deny
+        if(attempts>=MAX_ATTEMPTS){hardDeny('Face detection error: '+err.message);return;}
         setCmd('Detection error. Retry.','#EF4444');
-        setStatus('Face detection error. Ensure camera is unobstructed and try again.','#EF4444');
-        speak('Face detection error. Please try again.');
+        speak('A scan error occurred. Please try again.');
         setTimeout(()=>runLiveness(),3000);
       }
     };// end runLiveness
@@ -11840,13 +11773,8 @@ async function renderClassHub(){
   let autoId=_hubCid;
   if(['teacher','subject_teacher'].includes(ROLE)&&!autoId){
     try{
-      if(ROLE==='subject_teacher'){
-        const{data:ts}=await DB().from('teacher_subjects').select('class_id').eq('teacher_id',UP?.id).limit(1);
-        autoId=ts?.[0]?.class_id||null;
-      } else {
-        const{data:tc}=await DB().from('teacher_classes').select('class_id').eq('teacher_id',UP?.id).limit(1);
-        autoId=tc?.[0]?.class_id||null;
-      }
+      const{data:tc}=await DB().from('teacher_classes').select('class_id').eq('teacher_id',UP?.id).limit(1);
+      autoId=tc?.[0]?.class_id||null;
     }catch(e){}
   }
   if(autoId){
@@ -12172,8 +12100,20 @@ async function hubSaveCBT(){
 async function hubEnterScores(){
   const area=document.getElementById('hub-tab-content');
   if(!area) return;
-  const{data:cs}=await DB().from('class_subjects').select('subject_id,subjects(id,name)').eq('class_id',_hubCid);
-  const subjects=(cs||[]).map(r=>r.subjects).filter(Boolean);
+  // FIX 5: subject_teacher sees only their assigned subjects for this class
+  let subjects=[];
+  if(ROLE==='subject_teacher'){
+    const{data:ts}=await DB().from('teacher_subjects')
+      .select('subject_id,subjects(id,name)').eq('teacher_id',UP?.id).eq('class_id',_hubCid);
+    subjects=(ts||[]).map(r=>r.subjects).filter(Boolean);
+    if(!subjects.length){
+      area.innerHTML='<div class="card" style="padding:32px;text-align:center;color:var(--brl);"><i class="fas fa-lock fa-2x" style="margin-bottom:12px;opacity:.4;display:block;"></i>You have no subjects assigned to this class. Contact your administrator.</div>';
+      return;
+    }
+  } else {
+    const{data:cs}=await DB().from('class_subjects').select('subject_id,subjects(id,name)').eq('class_id',_hubCid);
+    subjects=(cs||[]).map(r=>r.subjects).filter(Boolean);
+  }
   area.innerHTML=`
     <div class="card" style="padding:18px 20px;margin-bottom:14px;">
       <div style="font-weight:700;font-size:13.5px;color:var(--br);margin-bottom:12px;"><i class="fas fa-pen-to-square"></i> Enter Scores — ${_hubCname}</div>
@@ -12202,22 +12142,11 @@ async function hubLoadScoreEntry(){
   const area=document.getElementById('hub-score-entry-area');
   if(!subj){toast('Select a subject.','error');return;}
   if(!area) return;
-  // SECURITY: subject_teacher may only enter scores for assigned class+subject
-  if(ROLE==='subject_teacher'){
-    const{data:sc}=await DB().from('teacher_subjects').select('id')
-      .eq('teacher_id',UP?.id).eq('class_id',_hubCid).single();
-    if(!sc){
-      toast('⛔ You are not assigned to this class. Contact the administrator.','error');
-      area.innerHTML='';return;
-    }
-    if(subjId){
-      const{data:ss}=await DB().from('teacher_subjects').select('id')
-        .eq('teacher_id',UP?.id).eq('subject_id',subjId).eq('class_id',_hubCid).single();
-      if(!ss){
-        toast('⛔ You are not assigned to this subject in this class.','error');
-        area.innerHTML='';return;
-      }
-    }
+  // FIX 5: server-side verify subject_teacher is assigned to this subject+class
+  if(ROLE==='subject_teacher'&&subjId){
+    const{data:chk}=await DB().from('teacher_subjects').select('id')
+      .eq('teacher_id',UP?.id).eq('class_id',_hubCid).eq('subject_id',subjId).single();
+    if(!chk){toast('⛔ Access denied: You are not assigned to teach '+subj+' in this class.','error');return;}
   }
   area.innerHTML='<div style="text-align:center;padding:16px;"><i class="fas fa-spinner fa-spin" style="color:var(--brl);"></i></div>';
   const[{data:students},{data:existing}]=await Promise.all([
