@@ -14,6 +14,38 @@
 <link rel="apple-touch-icon" href="/icon-192.png">
 <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
 <link rel="icon" type="image/png" sizes="512x512" href="/icon-512.png">
+<!-- ═══ FETCH INTERCEPTOR — must be FIRST script, before all others ══════════
+     Caches face-api model files in Cache API (instant on repeat visits).
+     Wraps fetch with a 60s timeout so slow 4G never hangs indefinitely.
+     Guard: only installs if window.fetch exists (safe on all browsers). -->
+<script>
+window._FACE_API_URL='https://cdn.jsdelivr.net/npm/face-api.js@0.22.2';
+if(typeof window.fetch==='function'){
+  (function(){
+    var _orig=window.fetch.bind(window);
+    window.fetch=function(url,opts){
+      var s=typeof url==='string'?url:(url instanceof Request?url.url:'');
+      var isModel=/\/(tiny_face_detector|face_landmark|face_recognition|ssd_mobilenet|mtcnn_param)/.test(s)||
+                 (s.indexOf('face-api')!==-1&&s.indexOf('/weights')!==-1);
+      if(!isModel) return _orig(url,opts);
+      var CACHE='vis-face-v2';
+      var ctrl=new AbortController();
+      var tid=setTimeout(function(){ctrl.abort();},60000);
+      return (async function(){
+        if('caches' in self){
+          try{var c=await caches.open(CACHE);var hit=await c.match(s);if(hit){clearTimeout(tid);return hit;}}catch(e){}
+        }
+        try{
+          var r=await _orig(url,Object.assign({},opts||{},{signal:ctrl.signal}));
+          clearTimeout(tid);
+          if(r.ok&&'caches' in self){try{var c2=await caches.open(CACHE);c2.put(s,r.clone());}catch(e){}}
+          return r;
+        }catch(e){clearTimeout(tid);throw e;}
+      })();
+    };
+  })();
+}
+</script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.6.0/css/all.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -22,35 +54,6 @@
 <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
-<script>
-window._FACE_API_URL='https://cdn.jsdelivr.net/npm/face-api.js@0.22.2';
-// ── Fetch interceptor: Cache API + 60 s timeout for face-api model files ─────
-// Installed before face-api.js so every model fetch goes through here.
-// On repeat visits, models are served from Cache API instantly (0 KB download).
-(function(){
-  var _orig=window.fetch.bind(window);
-  window.fetch=function(url,opts){
-    var s=typeof url==='string'?url:(url instanceof Request?url.url:'');
-    var isModel=/\/(tiny_face_detector|face_landmark|face_recognition|ssd_mobilenet|mtcnn_param)/.test(s)||
-               (s.indexOf('face-api')!==-1&&(s.indexOf('/weights')!==-1));
-    if(!isModel) return _orig(url,opts);
-    var CACHE='vis-face-v2';
-    var ctrl=new AbortController();
-    var tid=setTimeout(function(){ctrl.abort();},60000);
-    return (async function(){
-      if('caches' in self){
-        try{var c=await caches.open(CACHE);var hit=await c.match(s);if(hit){clearTimeout(tid);return hit;}}catch(e){}
-      }
-      try{
-        var r=await _orig(url,Object.assign({},opts||{},{signal:ctrl.signal}));
-        clearTimeout(tid);
-        if(r.ok&&'caches' in self){try{var c2=await caches.open(CACHE);c2.put(s,r.clone());}catch(e){}}
-        return r;
-      }catch(e){clearTimeout(tid);throw e;}
-    })();
-  };
-})();
-</script>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet">
 <style>
 :root{--br:#5D4037;--brl:#8D6E63;--brd:#3E2723;--cr:#F8F1E3;--crd:#EDE4D8;}
