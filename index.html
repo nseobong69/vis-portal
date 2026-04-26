@@ -160,6 +160,8 @@ body.dark .tbl tr:hover td{background:#3E2723;}
 /* Anti-screenshot exam mode */
 body.exam-active{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;}
 body.exam-active *{-webkit-user-select:none;user-select:none;}
+body.exam-active #dynamic-content{-webkit-user-select:none;user-select:none;pointer-events:none;}
+body.exam-active .exam-opt,body.exam-active button,body.exam-active input,body.exam-active label{pointer-events:auto;}
 @media print{body.exam-active{display:none!important;}}
 .exam-watermark{position:fixed;inset:0;pointer-events:none;z-index:9998;background:
   repeating-linear-gradient(45deg,transparent,transparent 80px,rgba(93,64,55,.025) 80px,rgba(93,64,55,.025) 160px);}
@@ -399,6 +401,10 @@ body.exam-active *{-webkit-user-select:none;user-select:none;}
       </div>
     </div>
     <p id="auth-msg" style="margin-top:14px;text-align:center;font-size:12.5px;min-height:16px;"></p>
+    <div style="text-align:center;margin-top:10px;padding-top:10px;border-top:1px solid var(--crd);">
+      <span style="font-size:12.5px;color:var(--brl);">New here?</span>
+      <button onclick="showSignUpModal()" style="background:none;border:none;cursor:pointer;color:var(--br);font-size:12.5px;font-weight:700;font-family:'DM Sans',sans-serif;text-decoration:underline;padding:0 4px;">Sign up</button>
+    </div>
   </div>
 </div>
 
@@ -709,8 +715,14 @@ async function fpSendOTP(loginType){
       targetEmail=p.email; targetName=p.full_name||'Staff'; recordId=p.id;
 
     } else if(loginType==='student'){
-      const{data:s,error}=await DB().from('students').select('id,full_name,email,parent_email').eq('admission_number',ident.toUpperCase()).maybeSingle();
-      if(error||!s){fpMsg('❌ No student found with that admission number.');if(btn){btn.innerHTML='<i class="fas fa-paper-plane"></i> Send OTP to Email';btn.disabled=false;}return;}
+      const admUpper=ident.toUpperCase().trim();
+      let{data:s,error}=await DB().from('students').select('id,full_name,email,parent_email').eq('admission_number',admUpper).maybeSingle();
+      // Fallback: case-insensitive search if exact match fails
+      if(!s&&!error){
+        const{data:s2}=await DB().from('students').select('id,full_name,email,parent_email').ilike('admission_number',admUpper).maybeSingle();
+        s=s2;
+      }
+      if(!s){fpMsg('❌ No student found with that admission number. Check the number and try again.');if(btn){btn.innerHTML='<i class="fas fa-paper-plane"></i> Send OTP to Email';btn.disabled=false;}return;}
       targetEmail=s.email||s.parent_email||'';
       if(!targetEmail){fpMsg('❌ No email address linked to this student. Contact admin.');if(btn){btn.innerHTML='<i class="fas fa-paper-plane"></i> Send OTP to Email';btn.disabled=false;}return;}
       targetName=s.full_name||'Student'; recordId=s.id;
@@ -1140,6 +1152,7 @@ const MENUS={
     {i:'fa-key',l:'Pins',f:'renderResultPins'},
     {i:'fa-users-cog',l:'Parents',f:'renderParents'},
 {i:'fa-envelope-open-text',l:'Email Center',f:'renderEmailCenter'},
+    {i:'fa-user-plus',l:'Sign Up Profiles',f:'renderSignUpProfiles'},
   ],
   admin:[
     {i:'fa-home',l:'Dashboard',f:'renderDashboard'},
@@ -1167,6 +1180,7 @@ const MENUS={
     {i:'fa-key',l:'Pins',f:'renderResultPins'},
     {i:'fa-users-cog',l:'Parents',f:'renderParents'},
 {i:'fa-envelope-open-text',l:'Email Center',f:'renderEmailCenter'},
+    {i:'fa-user-plus',l:'Sign Up Profiles',f:'renderSignUpProfiles'},
     // NOTE: Admin does NOT have Settings or School Settings — super_admin only
   ],
   proprietor:[
@@ -1192,6 +1206,7 @@ const MENUS={
     {i:'fa-key',l:'Pins',f:'renderResultPins'},
     {i:'fa-users-cog',l:'Parents',f:'renderParents'},
 {i:'fa-envelope-open-text',l:'Email Center',f:'renderEmailCenter'},
+    {i:'fa-user-plus',l:'Sign Up Profiles',f:'renderSignUpProfiles'},
     // NOTE: NO Settings, NO School Settings
   ],
   head_teacher:[
@@ -1215,6 +1230,7 @@ const MENUS={
     {i:'fa-key',l:'Pins',f:'renderResultPins'},
     {i:'fa-users-cog',l:'Parents',f:'renderParents'},
 {i:'fa-envelope-open-text',l:'Email Center',f:'renderEmailCenter'},
+    {i:'fa-user-plus',l:'Sign Up Profiles',f:'renderSignUpProfiles'},
     // NOTE: NO Finance, NO Settings, NO School Settings
   ],
   principal:[
@@ -1238,6 +1254,7 @@ const MENUS={
     {i:'fa-key',l:'Pins',f:'renderResultPins'},
     {i:'fa-users-cog',l:'Parents',f:'renderParents'},
 {i:'fa-envelope-open-text',l:'Email Center',f:'renderEmailCenter'},
+    {i:'fa-user-plus',l:'Sign Up Profiles',f:'renderSignUpProfiles'},
     // NOTE: NO Finance, NO Settings, NO School Settings
   ],
   teacher:[ // class teacher — full access
@@ -2084,7 +2101,13 @@ async function addStudent(){
     student_type:($('ns-stype')?.value||'new')
   });
   if(error){toast('Error: '+error.message,'error');return;}
-  toast('✅ '+pupilOrStudent(cn)+' registered! Use Account Creation to assign login credentials.');
+  // Auto-send login email if email is provided
+  if(email){
+    try{await sendLoginDetailsEmail({toEmail:email,toName:full_name,email,password:surname+' (use your surname as password)',role:'student'});}catch(e){}
+    toast('✅ '+pupilOrStudent(cn)+' registered! Login details sent to '+email+'.');
+  } else {
+    toast('✅ '+pupilOrStudent(cn)+' registered! Use Account Creation to assign login credentials.');
+  }
   closeModal();renderStudents();
   }
 async function editStudent(id){
@@ -2345,7 +2368,15 @@ async function addStaff(){
     }
     return;
   }
-  toast('✅ Staff member added! Assign login credentials via Account Creation.');
+  // Auto-send login email if email provided and staff_code set
+  if(email){
+    const tempPass=genPass();
+    await DB().from('profiles').update({staff_code:tempPass}).eq('email',email).then(()=>{});
+    try{await sendLoginDetailsEmail({toEmail:email,toName:name,email,password:tempPass,role:'staff'});}catch(e){}
+    toast('✅ Staff member added! Login details sent to '+email+'.');
+  } else {
+    toast('✅ Staff member added! Assign login credentials via Account Creation.');
+  }
   closeModal();
   renderStaff();
 }
@@ -2465,9 +2496,15 @@ async function addParent(){
   const address=($('np-address')?.value||'').trim()||null;
   const relationship=$('np-rel')?.value||null;
   if(!name){toast('Full name is required.','error');return;}
-  const{error}=await DB().from('parents').insert({full_name:name,email,phone,address,relationship,has_account:false});
+  const tempPass=genPass();
+  const{error}=await DB().from('parents').insert({full_name:name,email,phone,address,relationship,password:tempPass,has_account:!!email});
   if(error){toast('Error: '+error.message,'error');return;}
-  toast('✅ Parent added! Use Account Creation to activate login.');
+  if(email){
+    try{await sendLoginDetailsEmail({toEmail:email,toName:name,email,password:tempPass,role:'parent'});}catch(e){}
+    toast('✅ Parent added! Login details sent to '+email+'.');
+  } else {
+    toast('✅ Parent added! Use Account Creation to activate login when email is provided.');
+  }
   closeModal();renderParents();
 }
 async function editParent(id){
@@ -8850,12 +8887,17 @@ async function saveStudentAccountCreds(){
   if(new Set(admNums).size!==admNums.length){toast('Duplicate admission numbers detected. Each must be unique.','error');return;}
   let saved=0,errors=0;
   for(const r of toSave){
-    const{error}=await DB().from('students').update({admission_number:r.adm,surname:r.pass,has_account:true}).eq('id',r.id);
+    const{data:st,error}=await DB().from('students').update({admission_number:r.adm,surname:r.pass,has_account:true}).eq('id',r.id).select('full_name,email,admission_number,surname').single();
     if(error) errors++;
-    else saved++;
+    else{
+      saved++;
+      if(st?.email){
+        try{await sendLoginDetailsEmail({toEmail:st.email,toName:st.full_name||'Student',email:st.admission_number||r.adm,password:r.pass+' (your surname/password)',role:'student'});}catch(e){}
+      }
+    }
   }
   if(errors) toast(`⚠️ ${saved} saved, ${errors} failed. Check for duplicate admission numbers.`,'error');
-  else toast(`✅ ${saved} student account(s) activated!`);
+  else toast(`✅ ${saved} student account(s) activated! Login details emailed where email exists.`);
   const cid=document.getElementById('ac-cid')?.value;
   if(cid) loadACStudentList(cid);
 }
@@ -8935,12 +8977,15 @@ async function saveStaffAccountCreds(){
   if(!toSave.length){toast('No credentials to save.','error');return;}
   let saved=0,errors=0;
   for(const r of toSave){
-    const{error}=await DB().from('profiles').update({email:r.email,staff_code:r.pass,has_account:true}).eq('id',r.id);
+    const{data:sp,error}=await DB().from('profiles').update({email:r.email,staff_code:r.pass,has_account:true}).eq('id',r.id).select('full_name,email').single();
     if(error) errors++;
-    else saved++;
+    else{
+      saved++;
+      if(sp?.email){try{await sendLoginDetailsEmail({toEmail:sp.email,toName:sp.full_name||'Staff',email:sp.email,password:r.pass,role:'staff'});}catch(e){}}
+    }
   }
   if(errors) toast(`⚠️ ${saved} saved, ${errors} failed.`,'error');
-  else toast(`✅ ${saved} staff account(s) activated!`);
+  else toast(`✅ ${saved} staff account(s) activated! Login details emailed.`);
   await renderACNewStaff();
 }
 
@@ -9474,6 +9519,11 @@ function _attachExamGuards(examId){
   document.addEventListener('keydown',window._examKeyHandler,true);
   document.addEventListener('keyup',window._examKeyHandler,true);
 
+  // Block copy/cut on exam content
+  window._examCopyHandler=function(e){e.preventDefault();return false;};
+  document.addEventListener('copy',window._examCopyHandler,true);
+  document.addEventListener('cut',window._examCopyHandler,true);
+
   // ✅ Prime speech engine — placed RIGHT AFTER exam becomes active
   try{
     const primer=new SpeechSynthesisUtterance(' ');
@@ -9502,6 +9552,11 @@ function _detachExamGuards(){
     document.removeEventListener('keydown',window._examKeyHandler,true);
     document.removeEventListener('keyup',window._examKeyHandler,true);
     window._examKeyHandler=null;
+  }
+  if(window._examCopyHandler){
+    document.removeEventListener('copy',window._examCopyHandler,true);
+    document.removeEventListener('cut',window._examCopyHandler,true);
+    window._examCopyHandler=null;
   }
   if(window._examViolTimer){clearTimeout(window._examViolTimer);window._examViolTimer=null;}
   if(window._examViolInterval){clearInterval(window._examViolInterval);window._examViolInterval=null;}
@@ -9591,10 +9646,12 @@ async function _startLookAwayDetection(examId){
   // for FREEZE_CONSEC consecutive checks, the video is declared static/frozen.
   let _prevPixelData=null;
   let _freezeCount=0;
-  const FREEZE_CONSEC=3;       // 3 consecutive near-identical frames (~6s)
-  const FREEZE_THRESHOLD=180;  // mean absolute pixel diff — very still = frozen
+  const FREEZE_CONSEC=8;       // 8 consecutive near-identical frames (~16s) before flagging
+  const FREEZE_THRESHOLD=12;   // mean absolute pixel diff — only flag near-zero movement
   let _freezeWarned=false;
   let _freezeSubmitTimer=null;
+  let _freezeGraceActive=true; // 20s startup grace — camera warming up
+  setTimeout(()=>{_freezeGraceActive=false;},20000);
 
   const _capturePixels=()=>{
     try{
@@ -9613,6 +9670,7 @@ async function _startLookAwayDetection(examId){
 
   window._freezeCheckInterval=setInterval(()=>{
     if(!window._examActive){clearInterval(window._freezeCheckInterval);window._freezeCheckInterval=null;return;}
+    if(_freezeGraceActive){_prevPixelData=null;return;} // startup grace period
     const cur=_capturePixels();
     if(!cur){_prevPixelData=null;return;}
     if(_prevPixelData){
@@ -9622,20 +9680,22 @@ async function _startLookAwayDetection(examId){
         if(_freezeCount>=FREEZE_CONSEC&&!_freezeWarned){
           _freezeWarned=true;
           const name=(UP?.full_name||'Student').split(' ')[0];
-          toast('🚨 '+name+': Static/frozen image detected in camera! Show live movement NOW.','error');
+          toast('🚨 '+name+': Camera appears frozen! Please nod or move slightly.','error');
           _speakWarning(name+', your camera appears to be showing a still image or is frozen. Nod your head or move immediately.');
           // Log violation
           try{DB().from('cbt_violations').insert({student_id:CU?.id||null,student_name:UP?.full_name||'Unknown',admission_number:UP?.admission_number||null,violation_type:'frozen_camera_detected',details:'Mean pixel diff='+diff.toFixed(1)+' over '+FREEZE_CONSEC+' checks',created_at:new Date().toISOString()});}catch(e){}
-          // Give 6s to show movement, then force submit
-          let cd=6;
+          // Give 12s to show movement, then force submit
+          let cd=12;
           _freezeSubmitTimer=setInterval(()=>{
             if(!window._examActive){clearInterval(_freezeSubmitTimer);_freezeSubmitTimer=null;return;}
+            // Check if motion resumed (reset by motion detection)
+            if(!_freezeWarned){clearInterval(_freezeSubmitTimer);_freezeSubmitTimer=null;return;}
             cd--;
             if(cd<=0){
               clearInterval(_freezeSubmitTimer);_freezeSubmitTimer=null;
               if(window._examActive)_forceExamSubmit('Static/frozen camera image — possible photo substitution detected');
             }else{
-              toast('🚨 Frozen image — auto-submit in '+cd+'s! Move to cancel.','error');
+              toast('🚨 Frozen camera — move NOW — auto-submit in '+cd+'s!','error');
             }
           },1000);
         }
@@ -14291,6 +14351,305 @@ window.addEventListener('DOMContentLoaded',async()=>{
   showPublicPage();
   console.log('%c✅ VIS School Portal v2 Ready','color:#5D4037;font-weight:700;font-size:14px;');
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SIGN UP — PUBLIC SELF-REGISTRATION
+// ═══════════════════════════════════════════════════════════════════════════════
+function showSignUpModal(){
+  modal(`<div style="padding:28px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+      <h3 class="hf" style="font-size:22px;color:var(--br);"><i class="fas fa-user-plus"></i> Sign Up</h3>
+      <button onclick="closeModal()" style="border:none;background:none;font-size:22px;cursor:pointer;color:var(--brl);">&times;</button>
+    </div>
+    <p style="font-size:13px;color:var(--brl);margin-bottom:20px;">Select your role to get started. Your account will be reviewed before activation.</p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:10px;">
+      <button onclick="showSignUpForm('staff')" class="btn btn-outline" style="flex-direction:column;gap:6px;padding:18px 14px;align-items:center;text-align:center;border-radius:14px;">
+        <i class="fas fa-user-tie" style="font-size:24px;color:var(--br);"></i>
+        <span style="font-weight:700;">Staff</span>
+        <span style="font-size:11px;color:var(--brl);font-weight:400;">Teacher / Admin / Other</span>
+      </button>
+      <button onclick="showSignUpForm('student')" class="btn btn-outline" style="flex-direction:column;gap:6px;padding:18px 14px;align-items:center;text-align:center;border-radius:14px;">
+        <i class="fas fa-user-graduate" style="font-size:24px;color:#2563EB;"></i>
+        <span style="font-weight:700;">Student / Pupil</span>
+        <span style="font-size:11px;color:var(--brl);font-weight:400;">Enrolled student</span>
+      </button>
+      <button onclick="showSignUpForm('parent')" class="btn btn-outline" style="flex-direction:column;gap:6px;padding:18px 14px;align-items:center;text-align:center;border-radius:14px;">
+        <i class="fas fa-user-friends" style="font-size:24px;color:#16A34A;"></i>
+        <span style="font-weight:700;">Parent / Guardian</span>
+        <span style="font-size:11px;color:var(--brl);font-weight:400;">Ward's parent or guardian</span>
+      </button>
+      <button onclick="closeModal();showAdmissionPublic();" class="btn btn-outline" style="flex-direction:column;gap:6px;padding:18px 14px;align-items:center;text-align:center;border-radius:14px;border-color:#D97706;color:#D97706;">
+        <i class="fas fa-file-alt" style="font-size:24px;color:#D97706;"></i>
+        <span style="font-weight:700;">Admission</span>
+        <span style="font-size:11px;color:var(--brl);font-weight:400;">Apply for admission</span>
+      </button>
+    </div>
+  </div>`,'480px');
+}
+
+function showSignUpForm(role){
+  const roleLabel=role==='staff'?'Staff':role==='student'?'Student / Pupil':'Parent / Guardian';
+  const roleColor=role==='staff'?'var(--br)':role==='student'?'#2563EB':'#16A34A';
+  modal(`<div style="padding:28px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+      <h3 class="hf" style="font-size:20px;color:${roleColor};"><i class="fas fa-user-plus"></i> Sign Up — ${roleLabel}</h3>
+      <button onclick="closeModal()" style="border:none;background:none;font-size:22px;cursor:pointer;color:var(--brl);">&times;</button>
+    </div>
+    <button onclick="showSignUpModal()" style="background:none;border:none;cursor:pointer;color:var(--brl);font-size:12.5px;font-family:inherit;padding:0 0 16px;"><i class="fas fa-arrow-left"></i> Back to role select</button>
+    <div style="display:flex;flex-direction:column;gap:12px;">
+      <div class="g2">
+        <div><label class="lbl">Full Name *</label><input id="su-name" class="input" placeholder="Surname Firstname Middlename"></div>
+        <div><label class="lbl">Gender *</label>
+          <select id="su-gender" class="input"><option value="">Select</option><option>Male</option><option>Female</option></select>
+        </div>
+      </div>
+      <div><label class="lbl">Residential Address *</label><input id="su-address" class="input" placeholder="House No, Street, City, State"></div>
+      <div class="g2">
+        <div><label class="lbl">Email Address *</label><input id="su-email" class="input" type="email" placeholder="yourmail@email.com"></div>
+        <div><label class="lbl">Phone Number *</label><input id="su-phone" class="input" type="tel" placeholder="080xxxxxxxx"></div>
+      </div>
+      ${role==='staff'?`<div><label class="lbl">Job Role / Title</label><input id="su-jobtitle" class="input" placeholder="e.g. Class Teacher, Subject Teacher, Accountant"></div>`:''}
+      ${role==='student'?`<div><label class="lbl">Class (if known)</label><input id="su-class" class="input" placeholder="e.g. JSS 1, Primary 3"></div>`:''}
+      ${role==='parent'?`<div><label class="lbl">Child's Name (if enrolled)</label><input id="su-child" class="input" placeholder="Child's full name"></div>`:''}
+      <div style="background:#FEF3C7;border-radius:11px;padding:11px 14px;font-size:12px;color:#92400E;"><i class="fas fa-info-circle" style="color:#D97706;"></i> Your request will be submitted to the school admin. Once approved, your login details will be sent to your email.</div>
+    </div>
+    <p id="su-msg" style="margin-top:12px;font-size:12.5px;min-height:16px;text-align:center;"></p>
+    <div style="display:flex;gap:9px;margin-top:16px;">
+      <button onclick="submitSignUpRequest('${role}')" class="btn btn-primary" style="flex:1;justify-content:center;padding:13px;font-size:14px;border-radius:13px;background:${roleColor};" id="su-btn"><i class="fas fa-paper-plane"></i> Submit Request</button>
+      <button onclick="closeModal()" class="btn btn-outline" style="padding:13px 16px;">Cancel</button>
+    </div>
+  </div>`,'520px');
+}
+
+async function submitSignUpRequest(role){
+  const name=(document.getElementById('su-name')?.value||'').trim();
+  const gender=(document.getElementById('su-gender')?.value||'').trim();
+  const address=(document.getElementById('su-address')?.value||'').trim();
+  const email=(document.getElementById('su-email')?.value||'').trim().toLowerCase();
+  const phone=(document.getElementById('su-phone')?.value||'').trim();
+  const extra=role==='staff'?(document.getElementById('su-jobtitle')?.value||'').trim()
+    :role==='student'?(document.getElementById('su-class')?.value||'').trim()
+    :(document.getElementById('su-child')?.value||'').trim();
+  const suMsg=document.getElementById('su-msg');
+  const suBtn=document.getElementById('su-btn');
+  if(!name){suMsg.textContent='❌ Full name is required.';suMsg.style.color='#EF4444';return;}
+  if(!gender){suMsg.textContent='❌ Select your gender.';suMsg.style.color='#EF4444';return;}
+  if(!address){suMsg.textContent='❌ Residential address is required.';suMsg.style.color='#EF4444';return;}
+  if(!email){suMsg.textContent='❌ Email address is required.';suMsg.style.color='#EF4444';return;}
+  if(!phone){suMsg.textContent='❌ Phone number is required.';suMsg.style.color='#EF4444';return;}
+  if(suBtn){suBtn.innerHTML='<span class="spinner"></span> Submitting…';suBtn.disabled=true;}
+  try{
+    const payload={
+      full_name:name,gender,address,email,phone,role,extra_info:extra,
+      status:'pending',submitted_at:new Date().toISOString()
+    };
+    const{error}=await DB().from('signup_requests').insert(payload);
+    if(error){
+      suMsg.textContent='❌ Submission failed: '+error.message;suMsg.style.color='#EF4444';
+      if(suBtn){suBtn.innerHTML='<i class="fas fa-paper-plane"></i> Submit Request';suBtn.disabled=false;}
+      return;
+    }
+    suMsg.textContent='✅ Request submitted! Check your email after admin approval.';suMsg.style.color='#16A34A';
+    if(suBtn){suBtn.innerHTML='✅ Submitted';suBtn.style.background='#16A34A';}
+    setTimeout(()=>closeModal(),3000);
+  }catch(e){
+    suMsg.textContent='❌ Error: '+e.message;suMsg.style.color='#EF4444';
+    if(suBtn){suBtn.innerHTML='<i class="fas fa-paper-plane"></i> Submit Request';suBtn.disabled=false;}
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// LOGIN DETAILS EMAIL TEMPLATE
+// ═══════════════════════════════════════════════════════════════════════════════
+function buildLoginDetailsEmailHtml({toName,email,password,role}){
+  const sn=SCHOOL_SETTINGS?.school_name||'Victorious International Schools';
+  const logo=SCHOOL_SETTINGS?.logo_url||'';
+  const pc=SCHOOL_SETTINGS?.primary_color||'#5D4037';
+  const roleLabel=(role||'').toLowerCase()==='student'?'Student':(role||'').toLowerCase()==='parent'?'Parent':'Staff';
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#F8F1E3;font-family:'Segoe UI',Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#F8F1E3;padding:30px 0;">
+<tr><td align="center">
+<table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#fff;border-radius:20px;overflow:hidden;box-shadow:0 4px 24px rgba(93,64,55,.13);">
+<!-- Header -->
+<tr><td style="background:${pc};padding:28px 32px;text-align:center;">
+  ${logo?`<img src="${logo}" alt="Logo" style="height:60px;object-fit:contain;border-radius:12px;margin-bottom:12px;display:block;margin-left:auto;margin-right:auto;">`:'<div style="font-size:40px;margin-bottom:10px;">🏫</div>'}
+  <div style="font-family:Georgia,serif;font-size:24px;font-weight:700;color:#fff;margin-bottom:4px;">${sn}</div>
+  <div style="font-size:12px;color:rgba(255,255,255,.8);font-style:italic;">${SCHOOL_SETTINGS?.motto||'Excellence in Education'}</div>
+</td></tr>
+<!-- Title -->
+<tr><td style="background:${pc}18;padding:18px 32px;border-bottom:2px solid ${pc}33;text-align:center;">
+  <div style="font-size:17px;font-weight:700;color:${pc};">🔑 Your Portal Login Details</div>
+</td></tr>
+<!-- Body -->
+<tr><td style="padding:30px 32px;">
+  <p style="font-size:15px;color:#2C1810;margin-bottom:18px;">Dear <strong>${toName}</strong>,</p>
+  <p style="font-size:14px;color:#4A3728;margin-bottom:22px;line-height:1.7;">Your ${roleLabel} account has been created on the <strong>${sn}</strong> portal. Your login details are below:</p>
+  <div style="background:#F8F1E3;border-left:4px solid ${pc};border-radius:10px;padding:18px 22px;margin-bottom:24px;">
+    <div style="margin-bottom:10px;"><span style="font-size:11px;font-weight:700;color:#8D6E63;text-transform:uppercase;letter-spacing:.07em;">Email</span><br><span style="font-size:16px;font-weight:700;color:#2C1810;">${email}</span></div>
+    <div><span style="font-size:11px;font-weight:700;color:#8D6E63;text-transform:uppercase;letter-spacing:.07em;">Password</span><br><span style="font-size:16px;font-weight:700;color:${pc};font-family:monospace;letter-spacing:.1em;">${password}</span></div>
+  </div>
+  <p style="font-size:14px;font-weight:700;color:${pc};margin-bottom:12px;">Follow these steps to complete your profile:</p>
+  <ol style="font-size:13.5px;color:#4A3728;line-height:2;padding-left:20px;margin-bottom:24px;">
+    <li>Open <a href="https://vis-portal.onrender.com" style="color:${pc};font-weight:700;">vis-portal.onrender.com</a></li>
+    <li>Click <strong>School Portal</strong></li>
+    <li>Select your role as <strong>${roleLabel}</strong></li>
+    <li>Enter the email and password above</li>
+    <li>Click <strong>Sign In</strong> (you can tick <em>Remember me</em> if you like)</li>
+    <li><strong>Take Your Photo</strong>: click the photo box, follow the voice instructions (turn left/right). If your face isn't showing, scroll up — you'll see it at the lower-left. Then click <strong>Capture Image</strong></li>
+    <li>Check your details. Confirm your name and email are correct. If not, enter the correct ones</li>
+    <li>Click <strong>Verify</strong>, check your email for OTP. Enter the OTP and click <strong>Confirm</strong></li>
+    <li>Change your password to something secure and click <strong>Update Profile</strong></li>
+    <li>✅ You should now see your dashboard</li>
+  </ol>
+  <div style="background:#FEF3C7;border-radius:10px;padding:14px 18px;margin-bottom:20px;">
+    <div style="font-size:12.5px;font-weight:700;color:#92400E;margin-bottom:6px;">📌 Note — If Dashboard Opens Without Updating Password</div>
+    <p style="font-size:12.5px;color:#92400E;margin:0;">Go to <strong>My Profile</strong>. If you don't see it, go to the top area near the school name/logo. Click the three dots (<strong>···</strong>). Enter a new password and save.</p>
+  </div>
+  <p style="font-size:12.5px;color:#8D6E63;line-height:1.7;">If you did not expect this email or did not request an account, please contact the school administration immediately.</p>
+</td></tr>
+<!-- Footer -->
+<tr><td style="background:${pc};padding:18px 32px;text-align:center;">
+  <div style="font-size:12px;color:rgba(255,255,255,.85);">${sn} · ${SCHOOL_SETTINGS?.address||''}</div>
+  <div style="font-size:11px;color:rgba(255,255,255,.6);margin-top:4px;">Powered by VIS School Portal</div>
+</td></tr>
+</table>
+</td></tr>
+</table>
+</body></html>`;
+}
+
+async function sendLoginDetailsEmail({toEmail,toName,email,password,role}){
+  if(!toEmail) return;
+  try{
+    await sendEmailDelivery({
+      toEmail,
+      toName,
+      subject:'Your '+SCHOOL_SETTINGS?.school_name+' Portal Login Details',
+      bodyHtml:buildLoginDetailsEmailHtml({toName,email,password,role})
+    });
+  }catch(e){console.warn('[LoginEmail] failed:',e.message);}
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SIGN UP PROFILES — ADMIN DASHBOARD MODULE
+// ═══════════════════════════════════════════════════════════════════════════════
+async function renderSignUpProfiles(){
+  const canAccess=['super_admin','admin','proprietor','head_teacher','principal'].includes(ROLE);
+  if(!canAccess){toast('Access denied.','error');return;}
+  setPage('Sign Up Profiles','Review and create accounts from sign-up requests',
+    `<button onclick="showSignUpProfileCreate('staff')" class="btn btn-primary btn-sm"><i class="fas fa-user-tie"></i> Add Staff</button>
+     <button onclick="showSignUpProfileCreate('student')" class="btn btn-outline btn-sm"><i class="fas fa-user-graduate"></i> Add Student</button>
+     <button onclick="showSignUpProfileCreate('parent')" class="btn btn-outline btn-sm"><i class="fas fa-user-friends"></i> Add Parent</button>`);
+  setContent('<div style="text-align:center;padding:40px;"><i class="fas fa-spinner fa-spin fa-2x" style="color:var(--brl);"></i></div>');
+  try{
+    const{data:reqs}=await DB().from('signup_requests').select('*').order('submitted_at',{ascending:false}).limit(100);
+    const pending=(reqs||[]).filter(r=>r.status==='pending');
+    const approved=(reqs||[]).filter(r=>r.status==='approved');
+    const rejected=(reqs||[]).filter(r=>r.status==='rejected');
+    const tabBtns=`<div style="display:flex;gap:4px;background:var(--cr);border-radius:13px;padding:4px;margin-bottom:20px;max-width:520px;">
+      <button id="sp-tab-0" class="tab-btn active" onclick="spTab(0)"><i class="fas fa-clock"></i> Pending (${pending.length})</button>
+      <button id="sp-tab-1" class="tab-btn" onclick="spTab(1)"><i class="fas fa-check"></i> Approved (${approved.length})</button>
+      <button id="sp-tab-2" class="tab-btn" onclick="spTab(2)"><i class="fas fa-times"></i> Rejected (${rejected.length})</button>
+    </div>`;
+    window._spReqs={pending,approved,rejected};
+    setContent(tabBtns+`<div id="sp-content">${buildSignUpRequestsHTML(pending,'pending')}</div>`);
+  }catch(e){
+    setContent(`<div class="card" style="padding:24px;"><div style="color:#EF4444;">${e.message}</div>
+      <div style="margin-top:14px;font-size:13px;color:var(--brl);">If the <em>signup_requests</em> table doesn't exist yet, run the following SQL in your Supabase project:<br><br>
+      <code style="background:#F8F1E3;padding:8px 12px;border-radius:8px;display:block;font-size:12px;margin-top:8px;">
+      CREATE TABLE IF NOT EXISTS signup_requests (id uuid DEFAULT gen_random_uuid() PRIMARY KEY, full_name text, gender text, address text, email text, phone text, role text, extra_info text, status text DEFAULT 'pending', submitted_at timestamptz DEFAULT now(), reviewed_at timestamptz, reviewed_by text);
+      </code></div></div>`);
+  }
+}
+
+function spTab(n){
+  [0,1,2].forEach(i=>{const b=document.getElementById('sp-tab-'+i);if(b)b.classList.toggle('active',i===n);});
+  const keys=['pending','approved','rejected'];
+  const area=document.getElementById('sp-content');
+  if(area) area.innerHTML=buildSignUpRequestsHTML((window._spReqs||{})[keys[n]]||[],keys[n]);
+}
+
+function buildSignUpRequestsHTML(items,status){
+  if(!items.length) return `<div class="card" style="padding:36px;text-align:center;color:var(--brl);">No ${status} requests.</div>`;
+  return `<div style="display:flex;flex-direction:column;gap:12px;">${items.map(r=>`
+    <div class="card" style="padding:18px;border-left:4px solid ${r.role==='staff'?'var(--br)':r.role==='student'?'#2563EB':'#16A34A'};">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px;">
+        <div>
+          <div style="font-weight:700;font-size:14.5px;color:var(--br);">${r.full_name}</div>
+          <div style="font-size:12px;color:var(--brl);margin-top:2px;">
+            <span class="badge ${r.role==='staff'?'bn':r.role==='student'?'bb':'bg'}">${(r.role||'').toUpperCase()}</span>
+            &nbsp;${r.email||'—'} &bull; ${r.phone||'—'}
+          </div>
+          <div style="font-size:12px;color:var(--brl);margin-top:3px;">${r.gender||'—'} &bull; ${r.address||'—'}</div>
+          ${r.extra_info?`<div style="font-size:12px;color:var(--brl);margin-top:2px;">Extra: ${r.extra_info}</div>`:''}
+          <div style="font-size:11px;color:var(--brl);margin-top:4px;">Submitted: ${fmtDate(r.submitted_at)}</div>
+        </div>
+        <div style="display:flex;gap:7px;flex-wrap:wrap;">
+          ${status==='pending'?`
+            <button onclick="approveSignUpRequest('${r.id}','${r.role}')" class="btn btn-sm btn-success"><i class="fas fa-check"></i> Approve &amp; Create Account</button>
+            <button onclick="rejectSignUpRequest('${r.id}')" class="btn btn-sm btn-danger"><i class="fas fa-times"></i> Reject</button>
+          `:`<span style="font-size:11.5px;font-weight:600;color:${status==='approved'?'#16A34A':'#EF4444'};text-transform:uppercase;">${status}</span>`}
+        </div>
+      </div>
+    </div>`).join('')}</div>`;
+}
+
+async function approveSignUpRequest(reqId,role){
+  const{data:req}=await DB().from('signup_requests').select('*').eq('id',reqId).single();
+  if(!req){toast('Request not found.','error');return;}
+  // Create the account based on role
+  const pass=genPass();
+  const nm=req.full_name||'User';
+  const email=req.email||'';
+  try{
+    if(role==='staff'){
+      const{error}=await DB().from('profiles').insert({full_name:nm,email,staff_code:pass,role:'teacher',gender:req.gender||null,address:req.address||null,phone:req.phone||null,created_at:new Date().toISOString()});
+      if(error){toast('Error creating staff: '+error.message,'error');return;}
+    } else if(role==='student'){
+      const adm=genAdm();
+      const{error}=await DB().from('students').insert({full_name:nm,surname:pass,admission_number:adm,email,gender:req.gender||null,class_name:req.extra_info||null,created_at:new Date().toISOString()});
+      if(error){toast('Error creating student: '+error.message,'error');return;}
+    } else if(role==='parent'){
+      const{error}=await DB().from('parents').insert({full_name:nm,email,password:pass,phone:req.phone||null,gender:req.gender||null,address:req.address||null,created_at:new Date().toISOString()});
+      if(error){toast('Error creating parent: '+error.message,'error');return;}
+    }
+    // Update request status
+    await DB().from('signup_requests').update({status:'approved',reviewed_at:new Date().toISOString(),reviewed_by:UP?.full_name||'Admin'}).eq('id',reqId);
+    // Send login email
+    if(email){
+      await sendLoginDetailsEmail({toEmail:email,toName:nm,email,password:role==='student'?pass+'  (this is your surname — use it as your password)':pass,role});
+      toast('✅ Account created & login details emailed to '+email);
+    } else {
+      toast('✅ Account created! No email on file to notify.');
+    }
+    renderSignUpProfiles();
+  }catch(e){toast('Error: '+e.message,'error');}
+}
+
+async function rejectSignUpRequest(reqId){
+  if(!confirm('Reject this sign-up request?')) return;
+  const{error}=await DB().from('signup_requests').update({status:'rejected',reviewed_at:new Date().toISOString(),reviewed_by:UP?.full_name||'Admin'}).eq('id',reqId);
+  if(error){toast('Error: '+error.message,'error');return;}
+  toast('Request rejected.');
+  renderSignUpProfiles();
+}
+
+function showSignUpProfileCreate(role){
+  // Reuse existing account creation modals
+  if(role==='staff') showAddStaffModal&&showAddStaffModal();
+  else if(role==='student') showAddStudentModal&&showAddStudentModal();
+  else if(role==='parent') showAddParentModal&&showAddParentModal();
+}
+
+// ── Helper: generate a simple password ───────────────────────────────────────
+function genPass(){
+  const c='ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+  let p='';for(let i=0;i<8;i++)p+=c[Math.floor(Math.random()*c.length)];
+  return p;
+}
+function genAdmNum(){return`VIS/${new Date().getFullYear()}/${String(Math.floor(Math.random()*90000)+10000)}`;}
+
 </script>
 </body>
 </html>
