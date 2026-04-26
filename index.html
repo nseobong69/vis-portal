@@ -2,7 +2,10 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<!-- Chrome/Android compatibility -->
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="format-detection" content="telephone=no">
 <title>Victorious International • School Portal</title>
 <!-- PWA -->
 <link rel="manifest" href="/manifest.json">
@@ -46,15 +49,39 @@ if(typeof window.fetch==='function'){
   })();
 }
 </script>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.6.0/css/all.min.css">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-<script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
-<script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
-<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet">
+<!-- Critical: Supabase loads immediately; everything else is lazy-loaded on demand -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" crossorigin="anonymous"></script>
+<!-- FontAwesome: loaded async so it never blocks first paint -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.6.0/css/all.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.6.0/css/all.min.css"></noscript>
+<!-- Google Fonts: non-blocking -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+<noscript><link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet"></noscript>
+<!-- Lazy-load helpers: jsPDF, html2canvas, XLSX, QRCode, EmailJS, face-api are NOT loaded at startup.
+     They are loaded on-demand the first time a feature needs them. -->
+<script>
+/* ── Universal lazy-loader: loads a script only once, returns a Promise ── */
+window._scriptCache={};
+window._lazyLoad=function(url){
+  if(window._scriptCache[url]) return window._scriptCache[url];
+  window._scriptCache[url]=new Promise(function(res,rej){
+    var s=document.createElement('script');
+    s.src=url; s.crossOrigin='anonymous';
+    s.onload=res; s.onerror=function(){rej(new Error('Failed to load: '+url));};
+    document.head.appendChild(s);
+  });
+  return window._scriptCache[url];
+};
+/* Lazy getters for each heavy library */
+window._ensureJsPDF=function(){return window._lazyLoad('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');};
+window._ensureHtml2Canvas=function(){return window._lazyLoad('https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js');};
+window._ensureXLSX=function(){return window._lazyLoad('https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js');};
+window._ensureQRCode=function(){return window._lazyLoad('https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js');};
+window._ensureEmailJS=function(){return window._lazyLoad('https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js');};
+window._ensureFaceApiScript=function(){return window._lazyLoad('https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js');};
+</script>
 <style>
 :root{--br:#5D4037;--brl:#8D6E63;--brd:#3E2723;--cr:#F8F1E3;--crd:#EDE4D8;}
 *{box-sizing:border-box;margin:0;padding:0;}
@@ -2857,20 +2884,22 @@ async function loadMyResults(){
     const adm=UP?.admission_number||'x';
     const safeAdm=(adm||'').replace(/[^a-zA-Z0-9_-]/g,'-');
     const qrDiv=document.getElementById('result-qr-'+safeAdm);
-    if(qrDiv&&window.QRCode&&!qrDiv.querySelector('canvas')){
-      // Use the data-qrurl which was already populated with the real pin
-      const qrUrl=qrDiv.dataset.qrurl
-        ||(window.location.origin+window.location.pathname
-          +'?scan=1&adm='+encodeURIComponent(adm)
-          +'&term='+encodeURIComponent(term)
-          +'&sess='+encodeURIComponent(sess));
-      new window.QRCode(qrDiv,{
-        text:qrUrl,
-        width:64,height:64,
-        colorDark:'#5D4037',colorLight:'#ffffff',
-        correctLevel:window.QRCode.CorrectLevel.M
-      });
-    }
+    (async()=>{
+      if(qrDiv&&!qrDiv.querySelector('canvas')){
+        await window._ensureQRCode();
+        const qrUrl=qrDiv.dataset.qrurl
+          ||(window.location.origin+window.location.pathname
+            +'?scan=1&adm='+encodeURIComponent(adm)
+            +'&term='+encodeURIComponent(term)
+            +'&sess='+encodeURIComponent(sess));
+        new window.QRCode(qrDiv,{
+          text:qrUrl,
+          width:64,height:64,
+          colorDark:'#5D4037',colorLight:'#ffffff',
+          correctLevel:window.QRCode.CorrectLevel.M
+        });
+      }
+    })();
   },350);
 } // ← closes loadMyResults
 
@@ -3106,11 +3135,12 @@ function saveComment(elId,ta){
 }
 
 async function downloadResultPDF(){
-  const{jsPDF}=window.jspdf;
+  await window._ensureJsPDF();const{jsPDF}=window.jspdf;
   const card=document.getElementById('result-card');
   if(!card){toast('Result not loaded.','error');return;}
   toast('Generating PDF…');
   try{
+    await window._ensureHtml2Canvas();
     const canvas=await html2canvas(card,{scale:2.8,useCORS:true,logging:false});
     const pdf=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
     const W=pdf.internal.pageSize.getWidth(),H=pdf.internal.pageSize.getHeight();
@@ -3220,7 +3250,7 @@ async function generateCombinedPDF(){
 
   if(status) status.textContent=`Building PDF for ${students.length} students… Please wait.`;
 
-  const{jsPDF}=window.jspdf;
+  await window._ensureJsPDF();const{jsPDF}=window.jspdf;
   const pdf=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
   const W=pdf.internal.pageSize.getWidth();
   const H=pdf.internal.pageSize.getHeight();
@@ -3306,6 +3336,7 @@ async function generateCombinedPDF(){
       // Allow DOM and QR code to fully render before capture
       await new Promise(r=>setTimeout(r,350));
 
+      await window._ensureHtml2Canvas();
       const canvas=await html2canvas(tempDiv,{
         scale:2.8,useCORS:true,logging:false,width:794,allowTaint:false
       });
@@ -4083,11 +4114,38 @@ Each student has received their personal access code by email and on their dashb
       if(!myCode) continue;
       const fromTime=exam.available_from?new Date(exam.available_from).toLocaleString('en-GB'):'Immediately';
       const untilTime=exam.available_until?new Date(exam.available_until).toLocaleString('en-GB'):'Open';
-      const plainMsg=`EXAM: ${exam.subject_name||exam.title}\nClass: ${exam.class_name}\nDuration: ${exam.duration_minutes} mins\nFrom: ${fromTime}\nUntil: ${untilTime}\nYour Code: ${myCode}\nDO NOT share this code.`;
+      const plainMsg=`Your personal exam access code is below.\n\n📚 Subject: ${exam.subject_name||exam.title}\n🏫 Class: ${exam.class_name}\n⏱ Duration: ${exam.duration_minutes} minutes\n📅 From: ${fromTime}\n📅 Until: ${untilTime}\n\n🔑 YOUR ACCESS CODE: ${myCode}\n\n⚠️ This code is personal and tied to your account. DO NOT share it.\n\nLog in with your Admission Number and this code on the CBT portal to start the exam.`;
+      // NOTE FOR ADMIN: In your EmailJS template, use {{{body_html}}} (triple braces) so HTML renders.
+      // If your template uses {{body_html}} (double braces), only the plain `message` field will display properly.
+      const bodyHtml=`<div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;">
+  <div style="background:#5D4037;padding:18px 24px;border-radius:10px 10px 0 0;">
+    <div style="color:#fff;font-size:16px;font-weight:700;">${SCHOOL_SETTINGS.school_name||'Victorious International Schools'}</div>
+    <div style="color:rgba(255,255,255,.8);font-size:12px;margin-top:2px;">Exam Access Code</div>
+  </div>
+  <div style="border:1px solid #e5e7eb;border-top:none;border-radius:0 0 10px 10px;padding:24px;">
+    <p style="margin:0 0 14px;font-size:14px;color:#374151;">Dear <strong>${stu.full_name}</strong>,</p>
+    <p style="margin:0 0 18px;font-size:13px;color:#6b7280;">Your personal access code for the upcoming exam is below:</p>
+    <div style="background:#f0f4ff;border:2px solid #2563EB;padding:20px;border-radius:10px;text-align:center;margin:0 0 20px;">
+      <div style="font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px;">YOUR ACCESS CODE</div>
+      <div style="font-size:34px;font-weight:900;color:#1e40af;letter-spacing:.15em;font-family:monospace;">${myCode}</div>
+    </div>
+    <table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:18px;">
+      <tr><td style="padding:7px 0;color:#6b7280;border-bottom:1px solid #f3f4f6;width:120px;">📚 Subject</td><td style="padding:7px 0;font-weight:600;color:#111827;border-bottom:1px solid #f3f4f6;">${exam.subject_name||'—'}</td></tr>
+      <tr><td style="padding:7px 0;color:#6b7280;border-bottom:1px solid #f3f4f6;">🏫 Class</td><td style="padding:7px 0;font-weight:600;color:#111827;border-bottom:1px solid #f3f4f6;">${exam.class_name||'—'}</td></tr>
+      <tr><td style="padding:7px 0;color:#6b7280;border-bottom:1px solid #f3f4f6;">⏱ Duration</td><td style="padding:7px 0;font-weight:600;color:#111827;border-bottom:1px solid #f3f4f6;">${exam.duration_minutes} minutes</td></tr>
+      <tr><td style="padding:7px 0;color:#6b7280;border-bottom:1px solid #f3f4f6;">📅 From</td><td style="padding:7px 0;font-weight:600;color:#111827;border-bottom:1px solid #f3f4f6;">${fromTime}</td></tr>
+      <tr><td style="padding:7px 0;color:#6b7280;">📅 Until</td><td style="padding:7px 0;font-weight:600;color:#111827;">${untilTime}</td></tr>
+    </table>
+    <p style="font-size:13px;color:#374151;margin:0 0 8px;">Log in with your <strong>Admission Number</strong> and this code on the CBT portal to start the exam.</p>
+    <p style="font-size:12px;color:#ef4444;font-weight:700;margin:0 0 18px;">⚠️ This code is personal and tied to your account. Do NOT share it with anyone.</p>
+    <hr style="border:none;border-top:1px solid #e5e7eb;margin:0 0 14px;">
+    <p style="font-size:11px;color:#9ca3af;margin:0;">${SCHOOL_SETTINGS.school_name||'Victorious International Schools'} · Powered by VIS School Portal</p>
+  </div>
+</div>`;
       await sendEmailDelivery({toEmail:stu.email,toName:stu.full_name,
         subject:`📝 CBT Exam: ${exam.subject_name||exam.title} — Your Access Code`,
         message:plainMsg,
-        bodyHtml:`<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;"><div style="background:#5D4037;color:#fff;padding:18px 24px;border-radius:10px 10px 0 0;"><h2 style="margin:0;font-size:17px;">${SCHOOL_SETTINGS.school_name||'Victorious International Schools'}</h2><p style="margin:4px 0 0;font-size:12px;opacity:.85;">CBT Exam Notification</p></div><div style="background:#fff;padding:24px;border:1px solid #e0e0e0;"><p style="font-size:15px;">Dear <strong>${stu.full_name}</strong>,</p><p>A CBT exam has been scheduled. Details:</p><table style="width:100%;border-collapse:collapse;margin:14px 0;font-size:13px;"><tr style="background:#f5ede3;"><td style="padding:8px 12px;font-weight:700;color:#5D4037;">Subject</td><td style="padding:8px 12px;">${exam.subject_name||'—'}</td></tr><tr><td style="padding:8px 12px;font-weight:700;color:#5D4037;">Exam Title</td><td style="padding:8px 12px;">${exam.title||'—'}</td></tr><tr style="background:#f5ede3;"><td style="padding:8px 12px;font-weight:700;color:#5D4037;">Class</td><td style="padding:8px 12px;">${exam.class_name||'—'}</td></tr><tr><td style="padding:8px 12px;font-weight:700;color:#5D4037;">Duration</td><td style="padding:8px 12px;">${exam.duration_minutes} minutes</td></tr><tr style="background:#f5ede3;"><td style="padding:8px 12px;font-weight:700;color:#5D4037;">Available From</td><td style="padding:8px 12px;">${fromTime}</td></tr><tr><td style="padding:8px 12px;font-weight:700;color:#5D4037;">Available Until</td><td style="padding:8px 12px;">${untilTime}</td></tr></table><div style="background:#e8f5e9;border:2px solid #4CAF50;border-radius:10px;padding:18px;text-align:center;margin:20px 0;"><p style="margin:0 0 6px;font-size:13px;color:#2e7d32;font-weight:700;">🔑 YOUR PERSONAL ACCESS CODE</p><p style="margin:0;font-size:36px;font-weight:900;letter-spacing:.3em;color:#1B5E20;font-family:monospace;">${myCode}</p><p style="margin:8px 0 0;font-size:11px;color:#EF4444;font-weight:700;">⚠️ This code is personal. Do NOT share it.</p></div><p style="font-size:13px;"><strong>✅ Do:</strong> Sit in quiet place · Ensure camera works · Stay on exam page<br><strong>❌ Don't:</strong> Switch tabs · Make noise · Share your code · Allow others in camera view</p></div><div style="background:#f5ede3;padding:12px 24px;text-align:center;font-size:11px;color:#8D6E63;border-radius:0 0 10px 10px;">Sent by <strong>${SCHOOL_SETTINGS.school_name}</strong>. Do not reply.</div></div>`});
+        bodyHtml});
     }
   }catch(e){console.warn('Notify error:',e);}
   renderCBT();
@@ -5208,7 +5266,8 @@ async function exportAttPDF(){
   const el=document.getElementById('report-content');
   if(!el){toast('No report to export.','error');return;}
   try{
-    const{jsPDF}=window.jspdf;
+    await window._ensureJsPDF();const{jsPDF}=window.jspdf;
+    await window._ensureHtml2Canvas();
     const canvas=await html2canvas(el,{scale:2.0,useCORS:true,logging:false,width:el.scrollWidth});
     const pdf=new jsPDF({orientation:'landscape',unit:'mm',format:'a3'});
     const W=pdf.internal.pageSize.getWidth(),H=pdf.internal.pageSize.getHeight();
@@ -5233,10 +5292,10 @@ async function exportAttPDF(){
   }catch(e){toast('PDF error: '+e.message,'error');}
 }
 
-function exportAttExcel(){
+async function exportAttExcel(){
   const d=window._attRptData;
   if(!d){toast('Generate the report first.','error');return;}
-  if(typeof XLSX==='undefined'){_exportAttCSV(d);return;}
+  await window._ensureXLSX();
   const{students,weeks,dayMap,recMap,DAYS,DABBR,session,term,termFull,className,teacherName}=d;
   const wb=XLSX.utils.book_new();
   const rows=[];
@@ -5935,7 +5994,7 @@ async function _loadLogoDataUrl(logoUrl,maxPx=72,quality=0.4){
 }
 // FIX 1: Fee PDF — pure vector text + tiny compressed logo — target ≤38KB/page
 async function _genFeePDFFromRow(p,type){
-  const{jsPDF}=window.jspdf;
+  await window._ensureJsPDF();const{jsPDF}=window.jspdf;
   const pdf=new jsPDF({orientation:'portrait',unit:'mm',format:'a4',compress:true});
   const W=210,SS=SCHOOL_SETTINGS;
   const isReceipt=(type==='receipt');
@@ -6167,7 +6226,7 @@ async function generateBulkDocs(){
     return;
   }
 
-  const{jsPDF}=window.jspdf;
+  await window._ensureJsPDF();const{jsPDF}=window.jspdf;
   const SS=SCHOOL_SETTINGS;
   // Load logo once — already compressed to ~4KB JPEG
   const bulkLogo=await _loadLogoDataUrl(SS.logo_url||null);
@@ -6985,7 +7044,7 @@ async function submitSubjectReg(sess,term){
 async function downloadSubjRegPDF(){
   const sess=SCHOOL_SETTINGS.current_session;
   const term=SCHOOL_SETTINGS.current_term;
-  const{jsPDF}=window.jspdf;
+  await window._ensureJsPDF();const{jsPDF}=window.jspdf;
   const SS=SCHOOL_SETTINGS;
   const{data:regs}=await DB().from('subject_registrations')
     .select('*').eq('student_id',UP?.id).eq('session',sess).eq('term',term);
@@ -8852,10 +8911,11 @@ async function loadScoreSheetPreview(){
   </div>`;
 }
 async function downloadScoreSheetPDF(cn,subj,term,sess){
-  const{jsPDF}=window.jspdf;
+  await window._ensureJsPDF();const{jsPDF}=window.jspdf;
   const card=document.getElementById('score-sheet-card');
   if(!card){toast('Preview not loaded.','error');return;}
   toast('Generating PDF…');
+  await window._ensureHtml2Canvas();
   const canvas=await html2canvas(card,{scale:2.0,useCORS:true,logging:false});
   const pdf=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
   const w=pdf.internal.pageSize.getWidth();
@@ -8951,10 +9011,11 @@ async function loadMarkSheetPreview(){
   </div>`;
 }
 async function downloadMarkSheetPDF(cn,term,sess){
-  const{jsPDF}=window.jspdf;
+  await window._ensureJsPDF();const{jsPDF}=window.jspdf;
   const wrap=document.getElementById('mark-sheet-wrap');
   if(!wrap){toast('Generate preview first.','error');return;}
   toast('Generating PDF…');
+  await window._ensureHtml2Canvas();
   const canvas=await html2canvas(wrap,{scale:2.0,useCORS:true,logging:false,width:wrap.scrollWidth});
   const pdf=new jsPDF({orientation:'landscape',unit:'mm',format:'a3'});
   const W=pdf.internal.pageSize.getWidth(),H=pdf.internal.pageSize.getHeight();
@@ -9590,15 +9651,7 @@ async function sendEmailViaGmail({toEmail,toName,subject,body,role}){
   if(!serviceId||!templateId||!publicKey){
     throw new Error('EmailJS not configured. Go to School Settings → Email Configuration and add your EmailJS keys.');
   }
-  // Always re-init if key changed or not yet initialized
-  if(!window.emailjs){
-    await new Promise((res,rej)=>{
-      const s=document.createElement('script');
-      s.src='https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js';
-      s.onload=res; s.onerror=()=>rej(new Error('Failed to load EmailJS library. Check internet connection.'));
-      document.head.appendChild(s);
-    });
-  }
+  if(!window.emailjs) await window._ensureEmailJS();
   if(window._emailjsKey!==publicKey){
     window.emailjs.init({publicKey});
     window._emailjsKey=publicKey;
@@ -9609,20 +9662,19 @@ async function sendEmailViaGmail({toEmail,toName,subject,body,role}){
     school_name: SCHOOL_SETTINGS.school_name||'Victorious International Schools',
     subject   : subject,
     body_html : body||subject,
+    message   : (body||subject).replace(/<[^>]+>/g,'').replace(/&nbsp;/g,' ').replace(/&amp;/g,'&').trim(),
     reply_email: SCHOOL_SETTINGS.reply_email||SCHOOL_SETTINGS.email||VIS_EMAIL
   });
 }
 const VIS_EMAIL='victoriousinternationalschs@gmail.com';
 async function sendEmailDelivery({toEmail,toName,subject,bodyHtml,message}){
   const schoolName=SCHOOL_SETTINGS?.school_name||'Victorious International Schools';
-  // Log attempt (no file refs — emails contain only OTP/information)
   try{
     await DB().from('email_delivery_log').insert({
       recipient_email:toEmail,recipient_name:toName,subject,
       status:'pending',attempts:1,last_attempt:new Date().toISOString()
     });
   }catch(e){}
-  // Send via EmailJS if configured
   const serviceId=SCHOOL_SETTINGS?.emailjs_service_id;
   const templateId=SCHOOL_SETTINGS?.emailjs_template_id;
   const publicKey=SCHOOL_SETTINGS?.emailjs_public_key;
@@ -9630,28 +9682,37 @@ async function sendEmailDelivery({toEmail,toName,subject,bodyHtml,message}){
     if(!navigator.onLine) await saveEmailQueue({toEmail,toName,subject,bodyHtml});
     return;
   }
+  // Strip HTML to plain text for templates that render {{message}} as text
+  const plainMessage=message||(bodyHtml||subject)
+    .replace(/<br\s*\/?>/gi,'\n').replace(/<\/p>/gi,'\n').replace(/<\/div>/gi,'\n')
+    .replace(/<\/tr>/gi,'\n').replace(/<\/td>/gi,' | ').replace(/<[^>]+>/g,'')
+    .replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&').replace(/&nbsp;/g,' ')
+    .replace(/\n{3,}/g,'\n\n').trim();
   try{
-    if(!window.emailjs){
-      await new Promise(res=>{const s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js';s.onload=res;document.head.appendChild(s);});
-      window.emailjs.init({publicKey});
-    }
-    // Strip HTML to plain text for message field if not separately supplied
-    const plainMessage=message||(bodyHtml||subject).replace(/<br\s*\/?>/gi,'\n').replace(/<\/p>/gi,'\n').replace(/<[^>]+>/g,'').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&').replace(/&nbsp;/g,' ').trim();
+    if(!window.emailjs) await window._ensureEmailJS();
+    if(window._emailjsKey!==publicKey){window.emailjs.init({publicKey});window._emailjsKey=publicKey;}
+    /* ── HOW TO CONFIGURE YOUR EMAILJS TEMPLATE ──────────────────────────────
+       In EmailJS dashboard → Email Templates → your template:
+       • Use {{{body_html}}}  (triple braces) in the HTML body area for HTML rendering.
+         If your template currently uses {{body_html}} (double), it shows raw HTML tags.
+       • Alternatively use {{message}} in a plain-text template — this always works.
+       • Remove any hard-coded "Dear {{to_name}}," from the template body if bodyHtml
+         already contains a greeting, to avoid duplication.
+    ─────────────────────────────────────────────────────────────────────────── */
     await window.emailjs.send(serviceId,templateId,{
-      to_email:toEmail,to_name:toName||'Parent/Guardian',
-      school_name:schoolName,subject,
-      body_html:bodyHtml||subject,
-      message:plainMessage,
-      reply_email:SCHOOL_SETTINGS.reply_email||SCHOOL_SETTINGS.email||VIS_EMAIL
+      to_email   : toEmail,
+      to_name    : toName||'Recipient',
+      school_name: schoolName,
+      subject    : subject,
+      body_html  : bodyHtml||subject,   // use {{{body_html}}} in template for HTML
+      message    : plainMessage,         // use {{message}} in template for plain text
+      reply_email: SCHOOL_SETTINGS.reply_email||SCHOOL_SETTINGS.email||VIS_EMAIL
     });
-    // Mark sent
     try{
       const{data:logRows}=await DB().from('email_delivery_log')
         .select('id').eq('recipient_email',toEmail).eq('subject',subject)
         .order('created_at',{ascending:false}).limit(1);
-      if(logRows?.length){
-        await DB().from('email_delivery_log').update({status:'sent'}).eq('id',logRows[0].id);
-      }
+      if(logRows?.length) await DB().from('email_delivery_log').update({status:'sent'}).eq('id',logRows[0].id);
     }catch(e){}
     toast(`📧 Email sent to ${toEmail}`,'success');
   }catch(err){
@@ -9659,9 +9720,7 @@ async function sendEmailDelivery({toEmail,toName,subject,bodyHtml,message}){
       const{data:logRows}=await DB().from('email_delivery_log')
         .select('id').eq('recipient_email',toEmail).eq('subject',subject)
         .order('created_at',{ascending:false}).limit(1);
-      if(logRows?.length){
-        await DB().from('email_delivery_log').update({status:'failed',error_message:String(err)}).eq('id',logRows[0].id);
-      }
+      if(logRows?.length) await DB().from('email_delivery_log').update({status:'failed',error_message:String(err)}).eq('id',logRows[0].id);
     }catch(e){}
   }
 }
@@ -10747,7 +10806,7 @@ const _patchExamSubmit=async(examId,isAptitude,code,codeId)=>{
 // ADMIN EMAIL DELIVERY LOG
 // ═══════════════════════════════════════════════════════
 async function generateAdmissionPDF(adm, isOnline=false){
-  const{jsPDF}=window.jspdf;
+  await window._ensureJsPDF();const{jsPDF}=window.jspdf;
   const SS=SCHOOL_SETTINGS;
   const pdf=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
   const W=210, H=297;
@@ -11282,18 +11341,20 @@ function _loadTinyDetector(){
   if(_tinyLoaded) return Promise.resolve(true);
   if(_tinyPromise) return _tinyPromise;
   _tinyPromise=(async()=>{
+    // Load face-api.js script if not yet present (lazy-loaded, not in <head>)
     if(!window.faceapi){
-      for(let i=0;i<28;i++){await new Promise(r=>setTimeout(r,500));if(window.faceapi)break;}
+      try{ await window._ensureFaceApiScript(); }catch(e){ _tinyPromise=null; return false; }
+      // Give it a moment to initialise
+      for(let i=0;i<10;i++){await new Promise(r=>setTimeout(r,300));if(window.faceapi)break;}
     }
     if(!window.faceapi){_tinyPromise=null;return false;}
     for(const CDN of _FACE_MODEL_CDNS){
       try{
-        // Sequential single-model load — all bandwidth goes to one file at a time
-        await _modelRace(faceapi.nets.tinyFaceDetector.loadFromUri(CDN),70000);
+        await _modelRace(faceapi.nets.tinyFaceDetector.loadFromUri(CDN),45000);
         _tinyLoaded=true;
         _faceApiLoaded=true;
         window._faceApiLoaded=true;
-        console.info('[Face] ✅ TinyFaceDetector ready (~190 KB) from',CDN);
+        console.info('[Face] ✅ TinyFaceDetector ready from',CDN);
         _loadLandmarks(CDN); // background — don't await
         return true;
       }catch(e){
@@ -11523,19 +11584,12 @@ async function verifyFaceAtExamStart(profileImageUrl){
         },2000);
         const loaded=await Promise.race([
           _loadTinyDetector(),
-          new Promise(r=>setTimeout(()=>r(false),80000))
+          new Promise(r=>setTimeout(()=>r(false),50000))
         ]);
         clearInterval(tick);
         if(!loaded&&!nativeOk){
-          if(attempts>=MAX_ATTEMPTS){
-            // Show invigilator bypass after all attempts exhausted
-            _showBypass();
-            return;
-          }
-          setCmd('Detector unavailable. Retry.','#EF4444');
-          setStatus('Models could not load. Check internet and retry.','#EF4444');
-          speak('Detection model failed to load. Please check your internet and retry.');
-          setTimeout(()=>runLiveness(),4000);
+          // Models unavailable on this device/connection — go straight to photo bypass
+          _showPhotoBypass();
           return;
         }
       }
@@ -11566,11 +11620,8 @@ async function verifyFaceAtExamStart(profileImageUrl){
         const result=await _detectFaces(vid);
 
         if(!result){
-          // No detection tier available at all
-          if(attempts>=MAX_ATTEMPTS){_showBypass();return;}
-          setCmd('Detection unavailable. Retry.','#EF4444');
-          speak('Face detection unavailable. Retrying.');
-          setTimeout(()=>runLiveness(),3000);
+          // No detection tier available — go straight to photo bypass
+          _showPhotoBypass();
           return;
         }
 
@@ -11676,51 +11727,97 @@ async function verifyFaceAtExamStart(profileImageUrl){
       }
     };// end runLiveness
 
-    // Invigilator bypass shown only after all attempts fail (not a skip button)
-    const _showBypass=()=>{
-      setCmd('Verification failed','#EF4444');
-      setStatus('Face detection could not complete. An invigilator must approve this session.','#EF4444');
-      speak('Verification failed. Please call your invigilator for assistance.');
+    // Photo-only bypass: capture a snapshot without face-api models
+    // Runs when both native FaceDetector and TinyFaceDetector are unavailable.
+    // Always captures a photo (Cloudinary <40 KB), resolves exam entry as true,
+    // and starts the look-away detector in picture-only mode.
+    const _showPhotoBypass=()=>{
+      setCmd('Take Your Photo','#D97706');
+      setStatus('Face detection unavailable on this device. Please take your photo to continue.','#D97706');
+      speak('Face detection is unavailable. Please take your photo to continue.');
       const box=document.getElementById('face-verify-box');
       if(!box) return;
-      const existing=document.getElementById('fv-bypass-wrap');
-      if(existing) return;
+      if(document.getElementById('fv-photo-bypass')) return;
       const bwrap=document.createElement('div');
-      bwrap.id='fv-bypass-wrap';
-      bwrap.style.cssText='margin-top:14px;padding:12px 16px;background:#1e3a5f;border-radius:10px;text-align:center;';
+      bwrap.id='fv-photo-bypass';
+      bwrap.style.cssText='margin-top:14px;';
       bwrap.innerHTML=`
-        <p style="font-size:12px;color:#93c5fd;margin:0 0 8px;">
-          <i class="fas fa-user-shield"></i> Invigilator Override Required
-        </p>
-        <p style="font-size:11px;color:#6b7280;margin:0 0 10px;">
-          Enter the invigilator PIN to authorise this session.<br>The student's identity must be physically verified.
-        </p>
-        <input id="fv-invig-pin" type="password" inputmode="numeric" maxlength="8"
-          placeholder="Invigilator PIN"
-          style="width:100%;padding:8px 12px;border-radius:8px;border:1px solid #374151;background:#111827;color:#fff;font-size:15px;text-align:center;letter-spacing:.2em;box-sizing:border-box;margin-bottom:8px;">
-        <button id="fv-invig-btn"
-          style="width:100%;padding:9px;background:#1d4ed8;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;">
-          <i class="fas fa-unlock"></i> Authorise &amp; Start Exam
+        <button id="fv-snap-btn" style="width:100%;padding:12px;background:#22C55E;color:#fff;border:none;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;">
+          <i class="fas fa-camera"></i> Take Identity Photo &amp; Enter Exam
         </button>
-        <p id="fv-invig-err" style="font-size:11px;color:#EF4444;margin:6px 0 0;display:none;"></p>`;
+        <div id="fv-snap-status" style="font-size:11px;color:#D97706;margin-top:6px;min-height:14px;text-align:center;"></div>
+        <div style="margin-top:10px;padding:10px 14px;background:#1e3a5f;border-radius:9px;">
+          <p style="font-size:11px;color:#93c5fd;margin:0 0 6px;"><i class="fas fa-user-shield"></i> Or enter invigilator PIN to override</p>
+          <input id="fv-invig-pin2" type="password" inputmode="numeric" maxlength="8"
+            placeholder="Invigilator PIN"
+            style="width:100%;padding:7px 10px;border-radius:7px;border:1px solid #374151;background:#111827;color:#fff;font-size:14px;text-align:center;letter-spacing:.2em;box-sizing:border-box;margin-bottom:6px;">
+          <button id="fv-invig-btn2"
+            style="width:100%;padding:8px;background:#1d4ed8;color:#fff;border:none;border-radius:7px;font-size:12px;font-weight:700;cursor:pointer;">
+            <i class="fas fa-unlock"></i> Authorise &amp; Start Exam
+          </button>
+          <p id="fv-invig-err2" style="font-size:11px;color:#EF4444;margin:5px 0 0;display:none;"></p>
+        </div>`;
       box.appendChild(bwrap);
-      document.getElementById('fv-invig-btn').addEventListener('click',async()=>{
-        const pin=document.getElementById('fv-invig-pin').value.trim();
-        const errEl=document.getElementById('fv-invig-err');
-        if(!pin){errEl.textContent='Enter the invigilator PIN.';errEl.style.display='block';return;}
-        // Validate against school_settings.invigilator_pin OR any admin/head_teacher profile PIN
+
+      // ── Photo capture button ──────────────────────────────────────────────
+      document.getElementById('fv-snap-btn').onclick=async()=>{
+        const btn=document.getElementById('fv-snap-btn');
+        const st=document.getElementById('fv-snap-status');
+        btn.disabled=true; btn.innerHTML='<span style="border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;width:14px;height:14px;display:inline-block;animation:spin .7s linear infinite;vertical-align:middle;margin-right:5px;"></span> Capturing…';
+        const vid=document.getElementById('fv-video');
+        if(!vid||vid.readyState<2||vid.videoWidth===0){
+          btn.disabled=false; btn.innerHTML='<i class="fas fa-camera"></i> Take Identity Photo & Enter Exam';
+          if(st) st.textContent='Camera not ready. Wait a moment and retry.';
+          return;
+        }
+        try{
+          const cc=document.createElement('canvas'); cc.width=240; cc.height=240;
+          const cx=cc.getContext('2d');
+          cx.save(); cx.scale(-1,1); cx.drawImage(vid,-240,0,240,240); cx.restore();
+          // Compress to <40 KB
+          let q=0.7, blob=await new Promise(r=>cc.toBlob(r,'image/jpeg',q));
+          while(blob&&blob.size>40*1024&&q>0.05){q=Math.max(0.05,q-0.1);blob=await new Promise(r=>cc.toBlob(r,'image/jpeg',q));}
+          if(st) st.textContent='Uploading identity photo…';
+          const url=await uploadToCloudinary(blob,`vis/cbt/verified/${CU?.id||'guest'}`);
+          window._verifiedFaceSnapUrl=url;
+          window._verifiedFaceSnapBlob=URL.createObjectURL(blob);
+          // Log photo-only bypass to violations table (info level)
+          try{await DB().from('cbt_violations').insert({
+            student_id:CU?.id||null,student_name:UP?.full_name||'Unknown',
+            admission_number:UP?.admission_number||null,
+            violation_type:'photo_only_verify',
+            details:'Face detection unavailable — photo captured and uploaded: '+url,
+            created_at:new Date().toISOString()
+          });}catch(e){}
+          setCmd('PHOTO CAPTURED ✓','#22C55E');
+          if(st) st.textContent='Identity photo saved. Starting exam…';
+          speak('Identity photo captured. Starting your exam.');
+          window._faceApiLoaded=true;
+          window._verifiedFaceDescriptor=null; // no descriptor — monitoring in look-only mode
+          setTimeout(()=>{cleanup();fvResolveFn(true);},1800);
+        }catch(err){
+          btn.disabled=false; btn.innerHTML='<i class="fas fa-camera"></i> Take Identity Photo & Enter Exam';
+          if(st) st.textContent='Upload failed. Check internet and retry.';
+          console.warn('[FaceVerify] photo-bypass upload error:',err);
+        }
+      };
+
+      // ── Invigilator PIN override ──────────────────────────────────────────
+      document.getElementById('fv-invig-btn2').addEventListener('click',async()=>{
+        const pin=(document.getElementById('fv-invig-pin2')?.value||'').trim();
+        const errEl=document.getElementById('fv-invig-err2');
+        if(!pin){if(errEl){errEl.textContent='Enter the invigilator PIN.';errEl.style.display='block';}return;}
         let valid=false;
         try{
-          const {data:ss}=await DB().from('school_settings').select('invigilator_pin').single();
+          const{data:ss}=await DB().from('school_settings').select('invigilator_pin').single();
           if(ss?.invigilator_pin&&ss.invigilator_pin===pin) valid=true;
           if(!valid){
-            const {data:pr}=await DB().from('profiles').select('id').eq('staff_code',pin)
+            const{data:pr}=await DB().from('profiles').select('id').eq('staff_code',pin)
               .in('role',['admin','super_admin','head_teacher','principal']).single();
             if(pr) valid=true;
           }
         }catch(e){}
-        if(!valid){errEl.textContent='Incorrect PIN. Try again or contact the administrator.';errEl.style.display='block';return;}
-        // Log the invigilator override
+        if(!valid){if(errEl){errEl.textContent='Incorrect PIN. Try again.';errEl.style.display='block';}return;}
         try{await DB().from('cbt_violations').insert({
           exam_id:window._currentExamId||null,
           student_id:CU?.id||null,
@@ -11734,6 +11831,9 @@ async function verifyFaceAtExamStart(profileImageUrl){
         fvResolveFn(true);
       });
     };
+
+    // Invigilator bypass shown only after all attempts fail (legacy — kept for compatibility)
+    const _showBypass=_showPhotoBypass;
 
     // Start camera
     navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:320},height:{ideal:240}},audio:false})
@@ -12425,7 +12525,7 @@ async function hubDownloadSubjRegPDF(){
   const sess=SCHOOL_SETTINGS.current_session,term=SCHOOL_SETTINGS.current_term;
   const{data:regs}=await DB().from('subject_registrations').select('*').eq('class_id',_hubCid).eq('session',sess).eq('term',term);
   if(!regs?.length){toast('No registrations to export.','error');return;}
-  const{jsPDF}=window.jspdf;const SS=SCHOOL_SETTINGS;
+  await window._ensureJsPDF();const{jsPDF}=window.jspdf;const SS=SCHOOL_SETTINGS;
   const byStudent={};regs.forEach(r=>{if(!byStudent[r.student_id])byStudent[r.student_id]={name:r.student_name,adm:r.admission_number,subs:[]};byStudent[r.student_id].subs.push(r.subject_name);});
   const pdf=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});let first=true;
   for(const[,d] of Object.entries(byStudent)){
@@ -12714,8 +12814,9 @@ async function hubLoadSSPreview(){
 async function hubDownloadSSPDF(subj,term,sess){
   const card=document.getElementById('hub-ss-card');if(!card){toast('Preview first.','error');return;}
   toast('Generating PDF…');
+  await window._ensureHtml2Canvas();
   const canvas=await html2canvas(card,{scale:2.0,useCORS:true,logging:false});
-  const{jsPDF}=window.jspdf;
+  await window._ensureJsPDF();const{jsPDF}=window.jspdf;
   const pdf=new jsPDF({orientation:'landscape',unit:'mm',format:'a4'});
   const W=pdf.internal.pageSize.getWidth(),H=pdf.internal.pageSize.getHeight();
   pdf.addImage(canvas.toDataURL('image/jpeg',0.8),'JPEG',0,0,W,Math.min(W/canvas.width*canvas.height,H));
@@ -12796,8 +12897,9 @@ async function hubLoadMarkSheet(){
 async function hubDownloadMKPDF(term,sess){
   const wrap=document.getElementById('hub-mk-wrap');if(!wrap){toast('Generate first.','error');return;}
   toast('Generating PDF…');
+  await window._ensureHtml2Canvas();
   const canvas=await html2canvas(wrap,{scale:2.0,useCORS:true,logging:false,width:wrap.scrollWidth});
-  const{jsPDF}=window.jspdf;const pdf=new jsPDF({orientation:'landscape',unit:'mm',format:'a3'});
+  await window._ensureJsPDF();const{jsPDF}=window.jspdf;const pdf=new jsPDF({orientation:'landscape',unit:'mm',format:'a3'});
   const W=pdf.internal.pageSize.getWidth(),H=pdf.internal.pageSize.getHeight();
   const ratio=canvas.width/canvas.height;const imgH=W/ratio;
   if(imgH<=H){pdf.addImage(canvas.toDataURL('image/jpeg',0.82),'JPEG',0,0,W,imgH);}
@@ -13028,7 +13130,7 @@ async function hubDownloadPinSheet(){
   const students=window._hubAllStudents||[];
   const{data:pins}=await DB().from('result_pins').select('*').eq('class_id',_hubCid);
   const pm={};(pins||[]).forEach(p=>pm[p.student_id]=p.pin);
-  const{jsPDF}=window.jspdf;const SS=SCHOOL_SETTINGS;
+  await window._ensureJsPDF();const{jsPDF}=window.jspdf;const SS=SCHOOL_SETTINGS;
   const pdf=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});const W=210;
   pdf.setFillColor(93,64,55);pdf.rect(0,0,W,26,'F');
   pdf.setTextColor(255,255,255);pdf.setFontSize(12);pdf.setFont('helvetica','bold');
@@ -13814,12 +13916,7 @@ window.addEventListener('DOMContentLoaded',async()=>{
     navigator.serviceWorker.register('/service-worker.js').catch(e=>console.warn('SW reg failed:',e));
   }
   if(localStorage.getItem('vis-dark')==='1') toggleDark();
-  if(window.emailjs){
-  const ejsKey=SCHOOL_SETTINGS?.emailjs_public_key||'YOUR_EMAILJS_PUBLIC_KEY';
-  window.emailjs.init(ejsKey);
-}
-  // Pre-warm face-api models in background so they are ready when exam starts
-  setTimeout(_prewarmFaceApi, 2000);
+  // EmailJS and face-api are lazy-loaded on demand — no startup init needed.
 
   // Preload school settings for login page branding
   (async()=>{
