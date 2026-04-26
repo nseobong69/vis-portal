@@ -14,6 +14,38 @@
 <link rel="apple-touch-icon" href="/icon-192.png">
 <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
 <link rel="icon" type="image/png" sizes="512x512" href="/icon-512.png">
+<!-- ═══ FETCH INTERCEPTOR — must be FIRST script, before all others ══════════
+     Caches face-api model files in Cache API (instant on repeat visits).
+     Wraps fetch with a 60s timeout so slow 4G never hangs indefinitely.
+     Guard: only installs if window.fetch exists (safe on all browsers). -->
+<script>
+window._FACE_API_URL='https://cdn.jsdelivr.net/npm/face-api.js@0.22.2';
+if(typeof window.fetch==='function'){
+  (function(){
+    var _orig=window.fetch.bind(window);
+    window.fetch=function(url,opts){
+      var s=typeof url==='string'?url:(url instanceof Request?url.url:'');
+      var isModel=/\/(tiny_face_detector|face_landmark|face_recognition|ssd_mobilenet|mtcnn_param)/.test(s)||
+                 (s.indexOf('face-api')!==-1&&s.indexOf('/weights')!==-1);
+      if(!isModel) return _orig(url,opts);
+      var CACHE='vis-face-v2';
+      var ctrl=new AbortController();
+      var tid=setTimeout(function(){ctrl.abort();},60000);
+      return (async function(){
+        if('caches' in self){
+          try{var c=await caches.open(CACHE);var hit=await c.match(s);if(hit){clearTimeout(tid);return hit;}}catch(e){}
+        }
+        try{
+          var r=await _orig(url,Object.assign({},opts||{},{signal:ctrl.signal}));
+          clearTimeout(tid);
+          if(r.ok&&'caches' in self){try{var c2=await caches.open(CACHE);c2.put(s,r.clone());}catch(e){}}
+          return r;
+        }catch(e){clearTimeout(tid);throw e;}
+      })();
+    };
+  })();
+}
+</script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.6.0/css/all.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -22,47 +54,6 @@
 <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
-<script>
-window._FACE_API_URL='https://cdn.jsdelivr.net/npm/face-api.js@0.22.2';
-// ── Intercept fetch for face-api model files: Cache API persistence + 25s timeout ──
-// Installed early (before face-api.js loads) so ALL model fetches go through here.
-// After first download the models are served from Cache API = instant on repeat visits.
-(function(){
-  var _orig=window.fetch.bind(window);
-  window.fetch=function(url,opts){
-    var s=typeof url==='string'?url:(url instanceof Request?url.url:'');
-    var isFaceModel=/\/(tiny_face_detector|face_landmark|face_recognition|ssd_mobilenetv1|mtcnn_param)/.test(s)||
-                    (s.indexOf('face-api')!==-1&&(s.indexOf('/weights/')!==-1||s.indexOf('/weights')!==-1));
-    if(!isFaceModel)return _orig(url,opts);
-    var CACHE='vis-faceapi-v1';
-    var ctrl=new AbortController();
-    var tid=setTimeout(function(){ctrl.abort();},25000);
-    return (async function(){
-      // Check cache first — instant if already stored
-      if('caches' in self){
-        try{
-          var c=await caches.open(CACHE);
-          var hit=await c.match(url);
-          if(hit){clearTimeout(tid);return hit;}
-        }catch(e){}
-      }
-      // Merge abort signals
-      var sig=ctrl.signal;
-      if(opts&&opts.signal&&typeof AbortSignal.any==='function'){
-        sig=AbortSignal.any([opts.signal,ctrl.signal]);
-      }
-      try{
-        var resp=await _orig(url,Object.assign({},opts||{},{signal:sig}));
-        clearTimeout(tid);
-        if(resp.ok&&'caches' in self){
-          try{var c2=await caches.open(CACHE);c2.put(url,resp.clone());}catch(e){}
-        }
-        return resp;
-      }catch(e){clearTimeout(tid);throw e;}
-    })();
-  };
-})();
-</script>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet">
 <style>
 :root{--br:#5D4037;--brl:#8D6E63;--brd:#3E2723;--cr:#F8F1E3;--crd:#EDE4D8;}
@@ -9029,38 +9020,40 @@ async function initExamMedia(examId, durationMins){
   window._faceSwapCount=0;
   window._faceMatchInterval=setInterval(async()=>{
     if(!window._examActive){clearInterval(window._faceMatchInterval);window._faceMatchInterval=null;return;}
-    if(!window.faceapi||!window._faceApiLoaded) return;
-    // If recognition net not yet loaded, try to get it now (may have finished loading during exam)
-    if(!window._verifiedFaceDescriptor){
-      // No descriptor stored — recognition net wasn't available at verification time
-      // Try loading it now in background so future intervals can use it
-      if(!_faceApiFullLoaded&&!_faceApiFullPromise) _loadRecognitionModel();
-      return;
-    }
     const v=document.getElementById('cbt-vid');
     if(!v||v.readyState<2) return;
     try{
-      const opts=new faceapi.TinyFaceDetectorOptions({inputSize:160,scoreThreshold:0.3});
-      const live=await faceapi.detectSingleFace(v,opts).withFaceLandmarks(true).withFaceDescriptor();
-      if(!live) return; // no face — handled by look-away detector
-      const dist=faceapi.euclideanDistance(live.descriptor,window._verifiedFaceDescriptor);
+      // Use unified _detectFaces: works with native API or face-api depending on what loaded
+      const result=await _detectFaces(v);
+      if(!result) return; // no tier available yet
+      if(!result.hasFace) return; // no face — handled by look-away detector separately
+
+      // Can only do identity comparison if we have both descriptors and recognition net
+      if(!window._verifiedFaceDescriptor||!result.descriptor){
+        // If recognition net has now loaded during the exam, try to get descriptor again
+        if(_recognitionLoaded&&_tinyLoaded&&window.faceapi&&!result.descriptor){
+          // descriptor was null because recognition wasn't loaded when _detectFaces ran;
+          // on next interval tick it will be available — nothing to do this tick
+        }
+        return;
+      }
+
+      const dist=faceapi.euclideanDistance(result.descriptor,window._verifiedFaceDescriptor);
       const name=(UP?.full_name||'Student').split(' ')[0];
       if(dist>0.60){
         window._faceSwapCount=(window._faceSwapCount||0)+1;
         if(window._faceSwapCount===1){
           toast('⚠️ '+name+': Unrecognised face detected! Switch back immediately.','error');
           _speakWarning(name+', this face does not match the verified identity. Please face the camera now.');
-          // Fix 5: correct selector — live panel is the second div inside the flex wrapper
           const pipInner=document.querySelector('#cbt-video-pip > div');
           const liveBox=pipInner?pipInner.children[1]:null;
-          if(liveBox){liveBox.style.border='3px solid #EF4444';setTimeout(()=>{liveBox.style.border='2px solid #22C55E';},3000);}
+          if(liveBox){liveBox.style.border='3px solid #EF4444';setTimeout(()=>{if(liveBox)liveBox.style.border='2px solid #22C55E';},3000);}
         } else if(window._faceSwapCount>=2){
           clearInterval(window._faceMatchInterval);window._faceMatchInterval=null;
           _forceExamSubmit('Different face detected — identity mismatch (dist='+dist.toFixed(2)+')');
         }
       } else {
-        window._faceSwapCount=0; // reset on good match
-        // Fix 5: correct selector for good-match green restore
+        window._faceSwapCount=0;
         const pipInner2=document.querySelector('#cbt-video-pip > div');
         const liveBox2=pipInner2?pipInner2.children[1]:null;
         if(liveBox2) liveBox2.style.borderColor='#22C55E';
@@ -9336,13 +9329,15 @@ async function _startLookAwayDetection(examId){
       for(let i=0;i<d.length;i+=4){sum+=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];count++;}
       const brightness=sum/count;
 
-      // ── Face-api multi-face / intruder detection ──────────────────────
-      if(window.faceapi&&window._faceApiLoaded&&!_faceCheckCooldown){
+      // ── Face detection: unified tier system ──────────────────────────────
+      const _canDetect=(_nativeDetector)||(window.faceapi&&_tinyLoaded);
+      if(_canDetect&&!_faceCheckCooldown){
         _faceCheckCooldown=true;
         setTimeout(()=>{_faceCheckCooldown=false;},2000);
         try{
-          const opts=new faceapi.TinyFaceDetectorOptions({inputSize:160,scoreThreshold:0.3});
-          const detections=await faceapi.detectAllFaces(vid,opts);
+          const det=await _detectFaces(vid);
+          const detCount=det?det.count:0;
+          const detections=det?Array(detCount).fill(null):[];  // shape compatibility
 
           // ── Multiple faces ──
           if(detections&&detections.length>1){
@@ -9356,7 +9351,8 @@ async function _startLookAwayDetection(examId){
                 window._intruderRecheck=setTimeout(async()=>{
                   window._intruderRecheck=null;
                   try{
-                    const rechk=await faceapi.detectAllFaces(vid,new faceapi.TinyFaceDetectorOptions({inputSize:160,scoreThreshold:0.3}));
+                    const rechkDet=await _detectFaces(vid);
+                    const rechk=rechkDet?Array(rechkDet.count).fill(null):[];
                     if(rechk&&rechk.length>1){
                       window._intruderCount=2;
                       _speakWarning(name+', intruder still detected. Your exam will be auto-submitted in 4 seconds.');
@@ -11237,109 +11233,160 @@ async function sendBulkEmails(){
 
 // ═══════════════════════════════════════════════════════
 // FACE VERIFICATION AT EXAM START (Issues 6 & 15)
-// ── Face-API Progressive Model Loading ───────────────────────────────────────
-// Phase 1 (essential): tinyFaceDetector + faceLandmark68TinyNet ≈ 540 KB
-//   → sufficient for liveness (face present / multiple faces) detection
-// Phase 2 (recognition): faceRecognitionNet ≈ 12 MB
-//   → needed only if profile photo matching is required
-// First download is cached via Cache API fetch interceptor above → instant on reload.
-// ─────────────────────────────────────────────────────────────────────────────
-let _faceApiLoaded=false;          // Phase 1 ready
-let _faceApiFullLoaded=false;      // Phase 2 ready
+// ══════════════════════════════════════════════════════════════════════════════
+// FACE DETECTION — 3-tier resilient system optimised for slow connections
+// Tier 1 (instant):  native browser FaceDetector API — zero download on Android
+// Tier 2 (~190 KB):  face-api TinyFaceDetector only, loaded SEQUENTIALLY
+// Tier 3 (~12.5 MB): Landmarks + RecognitionNet for profile match (background)
+// Models are cached via the fetch interceptor above → instant on repeat visits.
+// ══════════════════════════════════════════════════════════════════════════════
+
+let _tinyLoaded=false;
+let _landmarksLoaded=false;
+let _recognitionLoaded=false;
+let _tinyPromise=null;
+let _landmarksPromise=null;
+let _recognitionPromise=null;
+let _nativeDetector=null;
+
+// Legacy flags used elsewhere in the codebase
+let _faceApiLoaded=false;
 let _faceApiPrewarmPromise=null;
-let _faceApiFullPromise=null;
 
 const _FACE_MODEL_CDNS=[
   'https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/weights',
   'https://unpkg.com/face-api.js@0.22.2/weights',
 ];
 
-function _faceModelTimeout(promise,ms,label){
-  return Promise.race([
-    promise,
-    new Promise((_,rej)=>setTimeout(()=>rej(new Error('[timeout] '+label)),ms))
-  ]);
+function _modelRace(p,ms){
+  return Promise.race([p,new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout')),ms))]);
 }
 
-// Phase 1 — essential models only (~540 KB, loads in seconds on 4G)
-function _prewarmFaceApi(){
-  if(_faceApiLoaded) return Promise.resolve(true);
-  if(_faceApiPrewarmPromise) return _faceApiPrewarmPromise;
-  _faceApiPrewarmPromise=(async()=>{
-    // Wait up to 12 s for the deferred face-api.js script tag
+// Tier 1: native browser FaceDetector API (Chrome/Android) — no download
+async function _tryNativeFaceDetector(){
+  if(_nativeDetector) return true;
+  if(!('FaceDetector' in window)) return false;
+  try{
+    const fd=new FaceDetector({fastMode:true,maxDetectedFaces:5});
+    const c=document.createElement('canvas');c.width=2;c.height=2;
+    await fd.detect(c); // test call
+    _nativeDetector=fd;
+    window._nativeFaceDetector=fd;
+    console.info('[Face] ✅ Native FaceDetector ready (0 KB)');
+    return true;
+  }catch(e){_nativeDetector=null;return false;}
+}
+
+// Tier 2: TinyFaceDetector only (~190 KB, loaded sequentially — NOT parallel)
+function _loadTinyDetector(){
+  if(_tinyLoaded) return Promise.resolve(true);
+  if(_tinyPromise) return _tinyPromise;
+  _tinyPromise=(async()=>{
     if(!window.faceapi){
-      for(let i=0;i<24;i++){
-        await new Promise(r=>setTimeout(r,500));
-        if(window.faceapi) break;
-      }
+      for(let i=0;i<28;i++){await new Promise(r=>setTimeout(r,500));if(window.faceapi)break;}
     }
-    if(!window.faceapi){
-      console.warn('[FaceAPI] face-api.js script never became available');
-      _faceApiPrewarmPromise=null;
-      return false;
-    }
+    if(!window.faceapi){_tinyPromise=null;return false;}
     for(const CDN of _FACE_MODEL_CDNS){
       try{
-        await _faceModelTimeout(
-          Promise.all([
-            faceapi.nets.tinyFaceDetector.loadFromUri(CDN),
-            faceapi.nets.faceLandmark68TinyNet.loadFromUri(CDN),
-          ]),
-          35000, // 35 s for 540 KB on very slow connection
-          'essential models from '+CDN
-        );
+        // Sequential single-model load — all bandwidth goes to one file at a time
+        await _modelRace(faceapi.nets.tinyFaceDetector.loadFromUri(CDN),70000);
+        _tinyLoaded=true;
         _faceApiLoaded=true;
         window._faceApiLoaded=true;
-        console.info('[FaceAPI] ✅ Essential models ready from',CDN);
-        // Kick off recognition net download in background — non-blocking
-        _loadRecognitionModel(CDN);
+        console.info('[Face] ✅ TinyFaceDetector ready (~190 KB) from',CDN);
+        _loadLandmarks(CDN); // background — don't await
         return true;
       }catch(e){
-        console.warn('[FaceAPI] Essential models failed from',CDN,e.message||e);
-        // Reset so next CDN gets a clean try
+        console.warn('[Face] TinyFaceDetector failed from',CDN,e.message||e);
         try{faceapi.nets.tinyFaceDetector.dispose();}catch(_){}
+      }
+    }
+    _tinyPromise=null;return false;
+  })();
+  return _tinyPromise;
+}
+
+// Tier 3a: Landmarks (~350 KB) — needed before withFaceDescriptor works
+function _loadLandmarks(pref){
+  if(_landmarksLoaded) return Promise.resolve(true);
+  if(_landmarksPromise) return _landmarksPromise;
+  _landmarksPromise=(async()=>{
+    if(!window.faceapi) return false;
+    const cdns=pref?[pref,..._FACE_MODEL_CDNS.filter(c=>c!==pref)]:_FACE_MODEL_CDNS;
+    for(const CDN of cdns){
+      try{
+        await _modelRace(faceapi.nets.faceLandmark68TinyNet.loadFromUri(CDN),70000);
+        _landmarksLoaded=true;
+        console.info('[Face] ✅ Landmarks ready (~350 KB) from',CDN);
+        _loadRecognitionModel(CDN); // background
+        return true;
+      }catch(e){
+        console.warn('[Face] Landmarks failed from',CDN,e.message||e);
         try{faceapi.nets.faceLandmark68TinyNet.dispose();}catch(_){}
       }
     }
-    _faceApiPrewarmPromise=null;
-    return false;
+    _landmarksPromise=null;return false;
   })();
-  return _faceApiPrewarmPromise;
+  return _landmarksPromise;
 }
 
-// Phase 2 — recognition net (~12 MB, loads in background)
-function _loadRecognitionModel(preferredCdn){
-  if(_faceApiFullLoaded) return Promise.resolve(true);
-  if(_faceApiFullPromise) return _faceApiFullPromise;
-  _faceApiFullPromise=(async()=>{
+// Tier 3b: RecognitionNet (~12 MB) — needed for descriptor/identity matching
+function _loadRecognitionModel(pref){
+  if(_recognitionLoaded) return Promise.resolve(true);
+  if(_recognitionPromise) return _recognitionPromise;
+  _recognitionPromise=(async()=>{
     if(!window.faceapi) return false;
-    const cdns=preferredCdn
-      ? [preferredCdn,..._FACE_MODEL_CDNS.filter(c=>c!==preferredCdn)]
-      : _FACE_MODEL_CDNS;
+    const cdns=pref?[pref,..._FACE_MODEL_CDNS.filter(c=>c!==pref)]:_FACE_MODEL_CDNS;
     for(const CDN of cdns){
       try{
-        await _faceModelTimeout(
-          faceapi.nets.faceRecognitionNet.loadFromUri(CDN),
-          90000, // 90 s for 12 MB on slow 4G (cached after 1st download)
-          'recognition net from '+CDN
-        );
-        _faceApiFullLoaded=true;
+        await _modelRace(faceapi.nets.faceRecognitionNet.loadFromUri(CDN),120000);
+        _recognitionLoaded=true;
         window._faceApiFullLoaded=true;
-        console.info('[FaceAPI] ✅ Recognition net ready from',CDN);
+        console.info('[Face] ✅ RecognitionNet ready (~12 MB) from',CDN);
         return true;
       }catch(e){
-        console.warn('[FaceAPI] Recognition net failed from',CDN,e.message||e);
+        console.warn('[Face] RecognitionNet failed from',CDN,e.message||e);
         try{faceapi.nets.faceRecognitionNet.dispose();}catch(_){}
       }
     }
-    _faceApiFullPromise=null;
-    return false;
+    _recognitionPromise=null;return false;
   })();
-  return _faceApiFullPromise;
+  return _recognitionPromise;
 }
 
+// Unified detection — uses best available tier automatically
+// Returns {count, hasFace, detection, descriptor} or null
+async function _detectFaces(videoEl){
+  // Tier 1: native (instant, no model needed)
+  if(_nativeDetector){
+    try{
+      const faces=await _nativeDetector.detect(videoEl);
+      return{count:faces.length,hasFace:faces.length>0,detection:faces[0]||null,descriptor:null};
+    }catch(e){_nativeDetector=null;}
+  }
+  // Tier 2+: face-api
+  if(!_tinyLoaded||!window.faceapi) return null;
+  const opts=new faceapi.TinyFaceDetectorOptions({inputSize:224,scoreThreshold:0.35});
+  if(_recognitionLoaded&&_landmarksLoaded){
+    const [all,single]=await Promise.all([
+      faceapi.detectAllFaces(videoEl,opts),
+      faceapi.detectSingleFace(videoEl,opts).withFaceLandmarks(true).withFaceDescriptor()
+    ]);
+    return single
+      ?{count:all.length,hasFace:true,detection:single.detection,descriptor:single.descriptor}
+      :{count:all.length,hasFace:false,detection:null,descriptor:null};
+  }else{
+    const all=await faceapi.detectAllFaces(videoEl,opts);
+    return{count:all.length,hasFace:all.length>0,detection:all[0]||null,descriptor:null};
+  }
+}
+
+function _prewarmFaceApi(){
+  _tryNativeFaceDetector(); // always try native (instant)
+  return _loadTinyDetector();
+}
 function _ensureFaceApi(){
-  if(_faceApiLoaded) return Promise.resolve(true);
+  if(_tinyLoaded||_nativeDetector) return Promise.resolve(true);
   return _prewarmFaceApi();
 }
 
@@ -11462,28 +11509,35 @@ async function verifyFaceAtExamStart(profileImageUrl){
         else if(i===attempts)setDot(i,'active');
       }
 
-      // ── Phase 1: ensure essential models (540 KB) ────────────────────────
-      let essentialReady=_faceApiLoaded;
-      if(!essentialReady){
-        setCmd('Loading models&#8230;','#D97706');
-        let loadSecs=0;
-        const loadTick=setInterval(()=>{
-          loadSecs+=2;
-          setStatus(`Downloading detection model… ${loadSecs}s (first-time only)`,'#D97706');
+      // ── Tier 1: try native FaceDetector first (instant, 0 KB) ────────────
+      const nativeOk=await _tryNativeFaceDetector();
+
+      // ── Tier 2: if native unavailable, load TinyFaceDetector (~190 KB) ──
+      if(!nativeOk&&!_tinyLoaded){
+        setCmd('Loading detector&#8230;','#D97706');
+        let secs=0;
+        const tick=setInterval(()=>{
+          secs+=2;
+          const kb=Math.min(secs*3,190);
+          setStatus(`Downloading detector… ${secs}s (~${kb}/190 KB) — first-time only`,'#D97706');
         },2000);
-        essentialReady=await _prewarmFaceApi();
-        clearInterval(loadTick);
-      }
-      if(!essentialReady||!window.faceapi){
-        if(attempts>=MAX_ATTEMPTS){
-          hardDeny('Face detection models unavailable. Check your connection.');
+        const loaded=await Promise.race([
+          _loadTinyDetector(),
+          new Promise(r=>setTimeout(()=>r(false),80000))
+        ]);
+        clearInterval(tick);
+        if(!loaded&&!nativeOk){
+          if(attempts>=MAX_ATTEMPTS){
+            // Show invigilator bypass after all attempts exhausted
+            _showBypass();
+            return;
+          }
+          setCmd('Detector unavailable. Retry.','#EF4444');
+          setStatus('Models could not load. Check internet and retry.','#EF4444');
+          speak('Detection model failed to load. Please check your internet and retry.');
+          setTimeout(()=>runLiveness(),4000);
           return;
         }
-        setCmd('Model load failed. Retry.','#EF4444');
-        setStatus('Could not download detection models. Check your internet connection.','#EF4444');
-        speak('Face detection could not load. Please check your connection and try again.');
-        setTimeout(()=>runLiveness(),4000);
-        return;
       }
 
       // ── Liveness challenges ───────────────────────────────────────────────
@@ -11499,7 +11553,7 @@ async function verifyFaceAtExamStart(profileImageUrl){
       await new Promise(r=>setTimeout(r,700));
 
       // Ensure video has real frames
-      const vidReady=await _waitForVideo(vid,4000);
+      const vidReady=await _waitForVideo(vid,5000);
       if(!vidReady){
         setStatus('Camera not ready. Retrying…','#EF4444');
         speak('Camera is not ready. Please wait and try again.');
@@ -11507,56 +11561,28 @@ async function verifyFaceAtExamStart(profileImageUrl){
         return;
       }
 
-      // ── Phase 2: check recognition net availability ───────────────────────
-      const profileImg=document.getElementById('fv-profile-img');
-      const needsRecognition=!!profileImg;
-      let recognitionReady=_faceApiFullLoaded;
-
-      if(needsRecognition&&!recognitionReady){
-        setStatus('Downloading identity model… (12 MB — one-time download)','#D97706');
-        setCmd('Downloading ID model&#8230;','#D97706');
-        let rs=0;
-        const rtick=setInterval(()=>{
-          rs+=3;
-          setStatus(`Identity model: ${rs}s… (cached after 1st download)`,'#D97706');
-        },3000);
-        // Wait up to 45 s, then fall back to liveness-only
-        recognitionReady=await Promise.race([
-          _loadRecognitionModel(),
-          new Promise(r=>setTimeout(()=>r(false),45000))
-        ]);
-        clearInterval(rtick);
-        if(!recognitionReady){
-          setStatus('ID model timed out — running liveness-only mode','#D97706');
-          speak('Running in liveness mode due to slow connection.');
-          await new Promise(r=>setTimeout(r,1000));
-        }
-      }
-
-      // ── Face detection + matching ─────────────────────────────────────────
+      // ── Face detection ────────────────────────────────────────────────────
       try{
-        const opts=new faceapi.TinyFaceDetectorOptions({inputSize:224,scoreThreshold:0.35});
+        const result=await _detectFaces(vid);
 
-        // Multi-face check
-        const allFaces=await faceapi.detectAllFaces(vid,opts);
-        if(allFaces&&allFaces.length>1){
+        if(!result){
+          // No detection tier available at all
+          if(attempts>=MAX_ATTEMPTS){_showBypass();return;}
+          setCmd('Detection unavailable. Retry.','#EF4444');
+          speak('Face detection unavailable. Retrying.');
+          setTimeout(()=>runLiveness(),3000);
+          return;
+        }
+
+        // Multi-face guard
+        if(result.count>1){
           setCmd('Multiple faces!','#EF4444');
           speak('Multiple faces detected. Only you may be present.');
           hardDeny('Multiple faces at verification');
           return;
         }
 
-        // Live face — get descriptor only if recognition net loaded
-        let liveResult=null;
-        if(recognitionReady&&_faceApiFullLoaded){
-          liveResult=await faceapi.detectSingleFace(vid,opts).withFaceLandmarks(true).withFaceDescriptor();
-        } else {
-          // Landmarks-only (no 12 MB net required)
-          const partial=await faceapi.detectSingleFace(vid,opts).withFaceLandmarks(true);
-          if(partial) liveResult={detection:partial.detection,landmarks:partial.landmarks,descriptor:null};
-        }
-
-        if(!liveResult||!liveResult.detection){
+        if(!result.hasFace){
           if(attempts>=MAX_ATTEMPTS){hardDeny('No face detected after '+MAX_ATTEMPTS+' attempts');return;}
           setCmd('Face not detected. Retry.','#EF4444');
           speak('Face not detected. Ensure good lighting and face the camera directly.');
@@ -11564,46 +11590,56 @@ async function verifyFaceAtExamStart(profileImageUrl){
           return;
         }
 
-        // ── Liveness-only path (no profile photo OR recognition net unavailable) ──
-        if(!profileImg||!recognitionReady||!liveResult.descriptor){
-          setCmd('VERIFIED &#10003;','#22C55E');setDot(attempts,'ok');
-          const modeMsg=!profileImg?'Liveness confirmed.':'Face confirmed (liveness mode).';
-          setStatus(modeMsg+' Starting exam…','#22C55E');
-          speak('Identity confirmed. Starting your exam.');
-          if(liveResult.descriptor) window._verifiedFaceDescriptor=liveResult.descriptor;
-          window._faceApiLoaded=true;
-          // Capture snap
+        // ── Capture verified snap (always, regardless of tier) ────────────
+        const _captureSnap=async()=>{
           try{
-            const capCanvas=document.createElement('canvas');
-            capCanvas.width=240;capCanvas.height=240;
-            const capCtx=capCanvas.getContext('2d');
-            capCtx.save();capCtx.scale(-1,1);capCtx.drawImage(vid,-240,0,240,240);capCtx.restore();
-            let q=0.55,capBlob=await new Promise(r=>capCanvas.toBlob(r,'image/jpeg',q));
-            while(capBlob&&capBlob.size>40*1024&&q>0.1){q-=0.1;capBlob=await new Promise(r=>capCanvas.toBlob(r,'image/jpeg',q));}
-            if(capBlob&&capBlob.size<=40*1024){
-              const capUrl=await uploadToCloudinary(capBlob,`vis/cbt/verified/${CU?.id||'guest'}`);
-              window._verifiedFaceSnapUrl=capUrl;
-              window._verifiedFaceSnapBlob=URL.createObjectURL(capBlob);
+            const cc=document.createElement('canvas');cc.width=240;cc.height=240;
+            const cx=cc.getContext('2d');
+            cx.save();cx.scale(-1,1);cx.drawImage(vid,-240,0,240,240);cx.restore();
+            let q=0.55,blob=await new Promise(r=>cc.toBlob(r,'image/jpeg',q));
+            while(blob&&blob.size>40*1024&&q>0.1){q=Math.max(0.05,q-0.1);blob=await new Promise(r=>cc.toBlob(r,'image/jpeg',q));}
+            if(blob&&blob.size<=40*1024){
+              const url=await uploadToCloudinary(blob,`vis/cbt/verified/${CU?.id||'guest'}`);
+              window._verifiedFaceSnapUrl=url;
+              window._verifiedFaceSnapBlob=URL.createObjectURL(blob);
             }
           }catch(e){}
+        };
+
+        const profileImg=document.getElementById('fv-profile-img');
+
+        // ── No profile photo OR no descriptor available: liveness sufficient ─
+        if(!profileImg||!result.descriptor){
+          // If recognition not yet loaded, kick it off in background for in-exam monitoring
+          if(!_recognitionLoaded&&!_recognitionPromise) _loadLandmarks();
+          setCmd('VERIFIED &#10003;','#22C55E');setDot(attempts,'ok');
+          const modeLabel=!profileImg?'Liveness confirmed':'Face detected';
+          const modeNote=!result.descriptor?' (identity model loading in background)':'';
+          setStatus(modeLabel+modeNote+'. Starting exam…','#22C55E');
+          speak('Identity confirmed. Starting your exam.');
+          if(result.descriptor) window._verifiedFaceDescriptor=result.descriptor;
+          window._faceApiLoaded=true;
+          await _captureSnap();
           setTimeout(()=>{cleanup();fvResolveFn(true);},1600);
           return;
         }
 
-        // ── Full profile matching ─────────────────────────────────────────────
+        // ── Full profile photo match (descriptor available) ───────────────
+        const opts=new faceapi.TinyFaceDetectorOptions({inputSize:224,scoreThreshold:0.35});
         const profResult=await faceapi.detectSingleFace(profileImg,opts).withFaceLandmarks(true).withFaceDescriptor();
         if(!profResult){
-          if(attempts>=MAX_ATTEMPTS){hardDeny('Profile photo could not be verified after '+MAX_ATTEMPTS+' attempts');return;}
+          if(attempts>=MAX_ATTEMPTS){
+            hardDeny('Profile photo could not be verified after '+MAX_ATTEMPTS+' attempts');return;
+          }
           setCmd('Profile unclear. Retry.','#EF4444');
-          setStatus('Cannot read your profile photo. Ensure good lighting.','#EF4444');
           speak('Could not read your profile photo. Ensure good lighting and try again.');
           setTimeout(()=>runLiveness(),3000);
           return;
         }
 
-        const distance=faceapi.euclideanDistance(liveResult.descriptor,profResult.descriptor);
+        const distance=faceapi.euclideanDistance(result.descriptor,profResult.descriptor);
         const matchPct=Math.max(0,Math.round((1-distance)*100));
-        const THRESHOLD=0.50;
+        const THRESHOLD=0.52;
         const wrap=document.getElementById('fv-match-wrap');
         const bar=document.getElementById('fv-match-bar');
         const pctEl=document.getElementById('fv-match-pct');
@@ -11614,31 +11650,16 @@ async function verifyFaceAtExamStart(profileImageUrl){
         if(distance<THRESHOLD){
           setCmd('IDENTITY CONFIRMED &#10003;','#22C55E');setDot(attempts,'ok');
           setStatus('Welcome! Starting exam now…','#22C55E');
-          const firstName=(UP?.full_name||'Student').split(' ')[0];
-          speak('Identity confirmed. Welcome '+firstName+'. Starting your exam now.');
-          window._verifiedFaceDescriptor=liveResult.descriptor;
+          speak('Identity confirmed. Welcome. Starting your exam now.');
+          window._verifiedFaceDescriptor=result.descriptor;
           window._faceApiLoaded=true;
-          try{
-            const capCanvas=document.createElement('canvas');
-            capCanvas.width=240;capCanvas.height=240;
-            const capCtx=capCanvas.getContext('2d');
-            capCtx.save();capCtx.scale(-1,1);capCtx.drawImage(vid,-240,0,240,240);capCtx.restore();
-            let quality=0.55;
-            let capBlob=await new Promise(r=>capCanvas.toBlob(r,'image/jpeg',quality));
-            while(capBlob&&capBlob.size>40*1024&&quality>0.1){quality-=0.1;capBlob=await new Promise(r=>capCanvas.toBlob(r,'image/jpeg',quality));}
-            if(capBlob&&capBlob.size<=40*1024){
-              const capUrl=await uploadToCloudinary(capBlob,`vis/cbt/verified/${CU?.id||'guest'}`);
-              window._verifiedFaceSnapUrl=capUrl;
-              window._verifiedFaceSnapBlob=URL.createObjectURL(capBlob);
-            }
-          }catch(e){}
+          await _captureSnap();
           setTimeout(()=>{cleanup();fvResolveFn(true);},2000);
         }else{
           if(attempts>=MAX_ATTEMPTS){
             setCmd('VERIFICATION FAILED','#EF4444');
-            setStatus('Your face does not match the profile on record.','#EF4444');
             speak('Identity verification failed. Your face does not match. Please report to your invigilator.');
-            hardDeny('Face mismatch — not the registered student (dist='+distance.toFixed(3)+', match='+matchPct+'%)');
+            hardDeny('Face mismatch (dist='+distance.toFixed(3)+', match='+matchPct+'%)');
             return;
           }
           setCmd('Face mismatch. Retry.','#EF4444');
@@ -11647,12 +11668,72 @@ async function verifyFaceAtExamStart(profileImageUrl){
           setTimeout(()=>runLiveness(),3500);
         }
       }catch(err){
-        if(attempts>=MAX_ATTEMPTS){hardDeny('Face detection error: '+err.message);return;}
+        console.warn('[FaceVerify] error:',err);
+        if(attempts>=MAX_ATTEMPTS){_showBypass();return;}
         setCmd('Scan error. Retry.','#EF4444');
         speak('A scan error occurred. Please try again.');
         setTimeout(()=>runLiveness(),3000);
       }
     };// end runLiveness
+
+    // Invigilator bypass shown only after all attempts fail (not a skip button)
+    const _showBypass=()=>{
+      setCmd('Verification failed','#EF4444');
+      setStatus('Face detection could not complete. An invigilator must approve this session.','#EF4444');
+      speak('Verification failed. Please call your invigilator for assistance.');
+      const box=document.getElementById('face-verify-box');
+      if(!box) return;
+      const existing=document.getElementById('fv-bypass-wrap');
+      if(existing) return;
+      const bwrap=document.createElement('div');
+      bwrap.id='fv-bypass-wrap';
+      bwrap.style.cssText='margin-top:14px;padding:12px 16px;background:#1e3a5f;border-radius:10px;text-align:center;';
+      bwrap.innerHTML=`
+        <p style="font-size:12px;color:#93c5fd;margin:0 0 8px;">
+          <i class="fas fa-user-shield"></i> Invigilator Override Required
+        </p>
+        <p style="font-size:11px;color:#6b7280;margin:0 0 10px;">
+          Enter the invigilator PIN to authorise this session.<br>The student's identity must be physically verified.
+        </p>
+        <input id="fv-invig-pin" type="password" inputmode="numeric" maxlength="8"
+          placeholder="Invigilator PIN"
+          style="width:100%;padding:8px 12px;border-radius:8px;border:1px solid #374151;background:#111827;color:#fff;font-size:15px;text-align:center;letter-spacing:.2em;box-sizing:border-box;margin-bottom:8px;">
+        <button id="fv-invig-btn"
+          style="width:100%;padding:9px;background:#1d4ed8;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;">
+          <i class="fas fa-unlock"></i> Authorise &amp; Start Exam
+        </button>
+        <p id="fv-invig-err" style="font-size:11px;color:#EF4444;margin:6px 0 0;display:none;"></p>`;
+      box.appendChild(bwrap);
+      document.getElementById('fv-invig-btn').addEventListener('click',async()=>{
+        const pin=document.getElementById('fv-invig-pin').value.trim();
+        const errEl=document.getElementById('fv-invig-err');
+        if(!pin){errEl.textContent='Enter the invigilator PIN.';errEl.style.display='block';return;}
+        // Validate against school_settings.invigilator_pin OR any admin/head_teacher profile PIN
+        let valid=false;
+        try{
+          const {data:ss}=await DB().from('school_settings').select('invigilator_pin').single();
+          if(ss?.invigilator_pin&&ss.invigilator_pin===pin) valid=true;
+          if(!valid){
+            const {data:pr}=await DB().from('profiles').select('id').eq('staff_code',pin)
+              .in('role',['admin','super_admin','head_teacher','principal']).single();
+            if(pr) valid=true;
+          }
+        }catch(e){}
+        if(!valid){errEl.textContent='Incorrect PIN. Try again or contact the administrator.';errEl.style.display='block';return;}
+        // Log the invigilator override
+        try{await DB().from('cbt_violations').insert({
+          exam_id:window._currentExamId||null,
+          student_id:CU?.id||null,
+          student_name:UP?.full_name||'Unknown',
+          violation:'Invigilator bypass used — face detection failed on device',
+          severity:'info'
+        });}catch(e){}
+        window._verifiedFaceDescriptor=null;
+        window._faceApiLoaded=true;
+        cleanup();
+        fvResolveFn(true);
+      });
+    };
 
     // Start camera
     navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:320},height:{ideal:240}},audio:false})
