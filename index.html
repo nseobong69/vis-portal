@@ -1813,6 +1813,7 @@ async function viewClassStudents(id,name){
 async function renderSubjects(){
   setPage('Subjects','Manage subjects and assign to classes',`<button onclick="showAddSubjectModal()" class="btn btn-primary btn-sm"><i class="fas fa-plus"></i> Add Subject</button>`);
   const[{data:subjects},{data:classes}]=await Promise.all([DB().from('subjects').select('*').order('name'),DB().from('classes').select('id,name,arm').order('name')]);
+  const subjOpts=(subjects||[]).map(s=>`<option value="${s.id}">${s.name}${s.code?' ('+s.code+')':''}</option>`).join('');
   setContent(`<div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;">
     <div class="card" style="overflow:hidden;">
       <div style="padding:14px 18px;border-bottom:1px solid var(--crd);font-weight:700;font-size:14px;color:var(--br);">All Subjects (${(subjects||[]).length})</div>
@@ -1821,11 +1822,20 @@ async function renderSubjects(){
       </tbody></table></div>
     </div>
     <div class="card" style="padding:22px;">
-      <div style="font-weight:700;font-size:14px;color:var(--br);margin-bottom:16px;">Assign Subject to Class</div>
+      <div style="font-weight:700;font-size:14px;color:var(--br);margin-bottom:16px;">Assign Subjects to Class</div>
       <div style="display:flex;flex-direction:column;gap:13px;">
         <div><label class="lbl">Class</label><select id="as-cid" class="input" onchange="loadClassSubjects()"><option value="">Select class</option>${(classes||[]).map(c=>`<option value="${c.id}">${c.name}${c.arm?' '+c.arm:''}</option>`).join('')}</select></div>
-        <div><label class="lbl">Subject</label><select id="as-sid" class="input"><option value="">Select subject</option>${(subjects||[]).map(s=>`<option value="${s.id}">${s.name}</option>`).join('')}</select></div>
-        <button onclick="assignSubjectToClass()" class="btn btn-primary"><i class="fas fa-link"></i> Assign</button>
+        <div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+            <label class="lbl" style="margin-bottom:0;">Subjects <span style="font-weight:400;font-size:11px;color:var(--brl);">(hold Ctrl/⌘ to select multiple)</span></label>
+            <div style="display:flex;gap:6px;">
+              <button onclick="document.getElementById('as-sid').querySelectorAll('option').forEach(o=>o.selected=true)" class="btn btn-sm btn-ghost" style="font-size:11px;padding:3px 7px;">All</button>
+              <button onclick="document.getElementById('as-sid').querySelectorAll('option').forEach(o=>o.selected=false)" class="btn btn-sm btn-ghost" style="font-size:11px;padding:3px 7px;">None</button>
+            </div>
+          </div>
+          <select id="as-sid" class="input" multiple style="height:160px;">${subjOpts}</select>
+        </div>
+        <button onclick="assignSubjectToClass()" class="btn btn-primary"><i class="fas fa-link"></i> Assign Selected</button>
       </div>
       <div style="margin-top:20px;font-weight:700;font-size:13.5px;color:var(--br);margin-bottom:10px;">Assigned Subjects</div>
       <div id="cs-list"><p style="color:var(--brl);font-size:13px;">Select a class above.</p></div>
@@ -1838,28 +1848,58 @@ async function loadClassSubjects(){
   $('cs-list').innerHTML=(data||[]).map(cs=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--crd);"><span style="font-size:13px;color:var(--br);">${cs.subjects?.name||'—'}</span><button onclick="removeClassSubject('${cs.id}')" class="btn btn-sm btn-danger" style="padding:3px 7px;"><i class="fas fa-times"></i></button></div>`).join('')||'<p style="color:var(--brl);font-size:13px;">No subjects assigned.</p>';
 }
 function showAddSubjectModal(){
-  modal(`<div style="padding:26px;">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:22px;"><h3 class="hf" style="font-size:21px;color:var(--br);">Add Subject</h3><button onclick="closeModal()" style="border:none;background:none;font-size:21px;cursor:pointer;color:var(--brl);">&times;</button></div>
-    <div style="display:flex;flex-direction:column;gap:13px;">
-      <div><label class="lbl">Subject Name</label><input id="ns-name" class="input" placeholder="e.g. Mathematics"></div>
-      <div><label class="lbl">Subject Code</label><input id="ns-code" class="input" placeholder="e.g. MTH"></div>
+  // Build 40 row inputs (name + code)
+  let rows='';
+  for(let i=1;i<=40;i++){
+    rows+=`<div style="display:grid;grid-template-columns:1fr 100px;gap:8px;margin-bottom:7px;">
+      <input class="input ns-name" placeholder="Subject Name ${i}" style="padding:8px 11px;font-size:13px;">
+      <input class="input ns-code" placeholder="Code" style="padding:8px 11px;font-size:13px;text-transform:uppercase;" oninput="this.value=this.value.toUpperCase()">
+    </div>`;
+  }
+  modal(`<div style="padding:22px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+      <h3 class="hf" style="font-size:20px;color:var(--br);">Add Subjects (Bulk)</h3>
+      <button onclick="closeModal()" style="border:none;background:none;font-size:21px;cursor:pointer;color:var(--brl);">&times;</button>
     </div>
-    <div style="display:flex;gap:9px;margin-top:18px;"><button onclick="addSubject()" class="btn btn-primary" style="flex:1;justify-content:center;padding:12px;">Add Subject</button><button onclick="closeModal()" class="btn btn-outline" style="padding:12px 18px;">Cancel</button></div>
+    <div style="background:#FEF3C7;border-radius:10px;padding:9px 14px;margin-bottom:14px;font-size:12px;color:#92400E;"><i class="fas fa-info-circle"></i> Fill as many boxes as needed. Empty rows are ignored automatically.</div>
+    <div style="max-height:55vh;overflow-y:auto;padding-right:6px;" id="ns-scroll">
+      <div style="display:grid;grid-template-columns:1fr 100px;gap:8px;margin-bottom:4px;">
+        <span class="lbl">Subject Name</span><span class="lbl">Code</span>
+      </div>
+      ${rows}
+    </div>
+    <div style="display:flex;gap:9px;margin-top:14px;">
+      <button onclick="addSubjectBulk()" class="btn btn-primary" style="flex:1;justify-content:center;padding:12px;"><i class="fas fa-plus-circle"></i> Add All Subjects</button>
+      <button onclick="closeModal()" class="btn btn-outline" style="padding:12px 18px;">Cancel</button>
+    </div>
   </div>`);
 }
-async function addSubject(){
-  const name=$('ns-name').value.trim(),code=$('ns-code').value.trim().toUpperCase();
-  if(!name){toast('Enter subject name.','error');return;}
-  const{error}=await DB().from('subjects').insert({name,code});
+async function addSubjectBulk(){
+  const names=[...document.querySelectorAll('.ns-name')].map(i=>i.value.trim()).filter(Boolean);
+  const codes=[...document.querySelectorAll('.ns-code')].map(i=>i.value.trim().toUpperCase());
+  if(!names.length){toast('Enter at least one subject name.','error');return;}
+  // Build records
+  const records=names.map((name,idx)=>({name,code:codes[idx]||''}));
+  const{data,error}=await DB().from('subjects').insert(records).select();
   if(error){toast('Error: '+error.message,'error');return;}
-  toast('✅ Subject added!');closeModal();renderSubjects();
+  toast('✅ '+(data||records).length+' subject'+(records.length>1?'s':'')+' added!');
+  closeModal();renderSubjects();
 }
 async function assignSubjectToClass(){
-  const cid=$('as-cid').value,sid=$('as-sid').value;
-  if(!cid||!sid){toast('Select both class and subject.','error');return;}
-  const{error}=await DB().from('class_subjects').insert({class_id:cid,subject_id:sid});
-  if(error&&error.code!=='23505'){toast('Error: '+error.message,'error');return;}
-  toast('✅ Subject assigned!');loadClassSubjects();
+  const cid=$('as-cid').value;
+  const selEl=document.getElementById('as-sid');
+  if(!cid){toast('Select a class.','error');return;}
+  if(!selEl){toast('Subject selector not found.','error');return;}
+  const sids=[...selEl.selectedOptions].map(o=>o.value).filter(Boolean);
+  if(!sids.length){toast('Select at least one subject.','error');return;}
+  let added=0,skipped=0;
+  for(const sid of sids){
+    const{error}=await DB().from('class_subjects').insert({class_id:cid,subject_id:sid});
+    if(error&&error.code==='23505') skipped++;
+    else if(!error) added++;
+  }
+  const msg=added?`✅ ${added} subject${added>1?'s':''} assigned!`+(skipped?` (${skipped} already existed)`:''):'All selected subjects were already assigned.';
+  toast(msg);loadClassSubjects();
 }
 async function removeClassSubject(id){
   await DB().from('class_subjects').delete().eq('id',id);
@@ -2489,29 +2529,51 @@ async function renderAssignments(){
   const[{data:teachers},{data:classes},{data:subjects}]=await Promise.all([DB().from('profiles').select('id,full_name').order('full_name'),DB().from('classes').select('id,name,arm').order('name'),DB().from('subjects').select('id,name').order('name')]);
   const opts=(arr,vk,lk)=>arr.map(x=>`<option value="${x[vk]}">${x[lk]}</option>`).join('');
   const cOpts=classes.map(c=>`<option value="${c.id}">${c.name}${c.arm?' '+c.arm:''}</option>`).join('');
+  const sOpts=subjects.map(s=>`<option value="${s.id}">${s.name}</option>`).join('');
+  const multiHint='<span style="font-size:10.5px;color:var(--brl);font-weight:400;"> (hold Ctrl/⌘ for multiple)</span>';
   setContent(`
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:20px;">
+      <!-- Assign Teacher → Class(es) -->
       <div class="card" style="padding:22px;">
-        <div style="font-weight:700;font-size:14px;color:var(--br);margin-bottom:16px;">Assign Teacher → Class</div>
+        <div style="font-weight:700;font-size:14px;color:var(--br);margin-bottom:16px;">Assign Teacher → Class${multiHint}</div>
         <div style="display:flex;flex-direction:column;gap:12px;">
           <div><label class="lbl">Teacher</label><select id="tc-tid" class="input"><option value="">Select teacher</option>${opts(teachers,'id','full_name')}</select></div>
-          <div><label class="lbl">Class</label><select id="tc-cid" class="input"><option value="">Select class</option>${cOpts}</select></div>
+          <div>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+              <label class="lbl" style="margin-bottom:0;">Classes</label>
+              <div style="display:flex;gap:5px;">
+                <button onclick="document.getElementById('tc-cid').querySelectorAll('option').forEach(o=>o.selected=true)" class="btn btn-sm btn-ghost" style="font-size:10px;padding:2px 7px;">All</button>
+                <button onclick="document.getElementById('tc-cid').querySelectorAll('option').forEach(o=>o.selected=false)" class="btn btn-sm btn-ghost" style="font-size:10px;padding:2px 7px;">None</button>
+              </div>
+            </div>
+            <select id="tc-cid" class="input" multiple style="height:140px;">${cOpts}</select>
+          </div>
           <button onclick="assignTC()" class="btn btn-primary"><i class="fas fa-link"></i> Assign</button>
         </div>
       </div>
+      <!-- Assign Teacher → Subject(s) -->
       <div class="card" style="padding:22px;">
-        <div style="font-weight:700;font-size:14px;color:var(--br);margin-bottom:16px;">Assign Teacher → Subject</div>
+        <div style="font-weight:700;font-size:14px;color:var(--br);margin-bottom:16px;">Assign Teacher → Subject${multiHint}</div>
         <div style="display:flex;flex-direction:column;gap:12px;">
           <div><label class="lbl">Teacher</label><select id="ts-tid" class="input"><option value="">Select teacher</option>${opts(teachers,'id','full_name')}</select></div>
-          <div><label class="lbl">Subject</label><select id="ts-sid" class="input"><option value="">Select subject</option>${opts(subjects,'id','name')}</select></div>
-          <div><label class="lbl">Class (optional)</label><select id="ts-cid" class="input"><option value="">All classes</option>${cOpts}</select></div>
+          <div>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+              <label class="lbl" style="margin-bottom:0;">Subjects</label>
+              <div style="display:flex;gap:5px;">
+                <button onclick="document.getElementById('ts-sid').querySelectorAll('option').forEach(o=>o.selected=true)" class="btn btn-sm btn-ghost" style="font-size:10px;padding:2px 7px;">All</button>
+                <button onclick="document.getElementById('ts-sid').querySelectorAll('option').forEach(o=>o.selected=false)" class="btn btn-sm btn-ghost" style="font-size:10px;padding:2px 7px;">None</button>
+              </div>
+            </div>
+            <select id="ts-sid" class="input" multiple style="height:120px;">${sOpts}</select>
+          </div>
+          <div><label class="lbl">Class (optional — applies to all selected subjects)</label><select id="ts-cid" class="input"><option value="">All classes</option>${cOpts}</select></div>
           <button onclick="assignTS()" class="btn btn-primary"><i class="fas fa-link"></i> Assign</button>
         </div>
       </div>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;">
-      <div class="card" style="overflow:hidden;"><div style="padding:13px 18px;border-bottom:1px solid var(--crd);font-weight:700;font-size:14px;color:var(--br);">Class Assignments</div><div id="tc-list" style="padding:14px 18px;"></div></div>
-      <div class="card" style="overflow:hidden;"><div style="padding:13px 18px;border-bottom:1px solid var(--crd);font-weight:700;font-size:14px;color:var(--br);">Subject Assignments</div><div id="ts-list" style="padding:14px 18px;"></div></div>
+      <div class="card" style="overflow:hidden;"><div style="padding:13px 18px;border-bottom:1px solid var(--crd);font-weight:700;font-size:14px;color:var(--br);">Class Assignments</div><div id="tc-list" style="padding:14px 18px;max-height:360px;overflow-y:auto;"></div></div>
+      <div class="card" style="overflow:hidden;"><div style="padding:13px 18px;border-bottom:1px solid var(--crd);font-weight:700;font-size:14px;color:var(--br);">Subject Assignments</div><div id="ts-list" style="padding:14px 18px;max-height:360px;overflow-y:auto;"></div></div>
     </div>`);
   loadAssignLists();
 }
@@ -2522,8 +2584,37 @@ async function loadAssignLists(){
     $('ts-list').innerHTML=(ts||[]).map(r=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--crd);font-size:13px;"><span><b style="color:var(--br);">${r.profiles?.full_name}</b> → ${r.subjects?.name}${r.classes?.name?' ('+r.classes?.name+')':''}</span><button onclick="removeAssign('teacher_subjects','${r.id}')" class="btn btn-sm btn-danger" style="padding:3px 7px;"><i class="fas fa-times"></i></button></div>`).join('')||'<p style="color:var(--brl);font-size:13px;">No assignments.</p>';
   }catch(e){}
 }
-async function assignTC(){const tid=$('tc-tid').value,cid=$('tc-cid').value;if(!tid||!cid){toast('Select both fields.','error');return;}const{error}=await DB().from('teacher_classes').insert({teacher_id:tid,class_id:cid});if(error&&error.code!=='23505'){toast('Error: '+error.message,'error');return;}toast('✅ Assigned!');loadAssignLists();}
-async function assignTS(){const tid=$('ts-tid').value,sid=$('ts-sid').value,cid=$('ts-cid').value||null;if(!tid||!sid){toast('Select teacher and subject.','error');return;}const{error}=await DB().from('teacher_subjects').insert({teacher_id:tid,subject_id:sid,class_id:cid});if(error&&error.code!=='23505'){toast('Error: '+error.message,'error');return;}toast('✅ Assigned!');loadAssignLists();}
+async function assignTC(){
+  const tid=$('tc-tid').value;
+  const selEl=document.getElementById('tc-cid');
+  if(!tid){toast('Select a teacher.','error');return;}
+  const cids=[...selEl.selectedOptions].map(o=>o.value).filter(Boolean);
+  if(!cids.length){toast('Select at least one class.','error');return;}
+  let added=0,skipped=0;
+  for(const cid of cids){
+    const{error}=await DB().from('teacher_classes').insert({teacher_id:tid,class_id:cid});
+    if(error&&error.code==='23505') skipped++;
+    else if(!error) added++;
+  }
+  toast(added?`✅ ${added} class assignment${added>1?'s':''} added!`+(skipped?` (${skipped} already existed)`:''):'All selected already assigned.');
+  loadAssignLists();
+}
+async function assignTS(){
+  const tid=$('ts-tid').value;
+  const subjEl=document.getElementById('ts-sid');
+  const cid=$('ts-cid').value||null;
+  if(!tid){toast('Select a teacher.','error');return;}
+  const sids=[...subjEl.selectedOptions].map(o=>o.value).filter(Boolean);
+  if(!sids.length){toast('Select at least one subject.','error');return;}
+  let added=0,skipped=0;
+  for(const sid of sids){
+    const{error}=await DB().from('teacher_subjects').insert({teacher_id:tid,subject_id:sid,class_id:cid});
+    if(error&&error.code==='23505') skipped++;
+    else if(!error) added++;
+  }
+  toast(added?`✅ ${added} subject assignment${added>1?'s':''} added!`+(skipped?` (${skipped} already existed)`:''):'All selected already assigned.');
+  loadAssignLists();
+}
 async function removeAssign(tbl,id){await DB().from(tbl).delete().eq('id',id);toast('Removed.');loadAssignLists();}
 
 // ═══════════════════════════════════════════
@@ -6990,27 +7081,80 @@ async function renderSubjectRegistration(){
   
   // Admin/Teacher view - register for a student/class
   const{data:classes}=await DB().from('classes').select('id,name,arm').order('name');
-  setContent(`<div class="card" style="padding:26px;max-width:640px;margin-bottom:18px;">
-    <div style="font-weight:700;font-size:14px;color:var(--br);margin-bottom:16px;"><i class="fas fa-search"></i> View / Manage Registrations</div>
+  const sess=SCHOOL_SETTINGS.current_session||'';
+  const term=SCHOOL_SETTINGS.current_term||'1st Term';
+  const ALL_SESS=['2024/2025','2025/2026','2026/2027','2027/2028','2028/2029','2029/2030','2030/2031','2031/2032','2032/2033'];
+  const sessOpts=ALL_SESS.map(s=>`<option value="${s}"${s===sess?' selected':''}>${s}</option>`).join('');
+  const termOpts=['1st Term','2nd Term','3rd Term'].map(t=>`<option${t===term?' selected':''}>${t}</option>`).join('');
+  const classOpts=(classes||[]).map(c=>`<option value="${c.id}">${c.name}${c.arm?' '+c.arm:''}</option>`).join('');
+  const subjOpts=(subjects||[]).map(s=>`<option value="${s.id}">${s.name}</option>`).join('');
+  setContent(`
+  <!-- ═══ BULK REGISTER PANEL ═══ -->
+  <div class="card" style="padding:26px;max-width:780px;margin-bottom:18px;border-left:4px solid var(--br);">
+    <div style="font-weight:700;font-size:15px;color:var(--br);margin-bottom:4px;"><i class="fas fa-users"></i> Bulk Subject Registration</div>
+    <div style="font-size:12.5px;color:var(--brl);margin-bottom:18px;">Select students and subjects to register together in one action.</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;">
+      <div>
+        <label class="lbl">Session</label>
+        <select id="sr-sess-bulk" class="input">${sessOpts}</select>
+      </div>
+      <div>
+        <label class="lbl">Term</label>
+        <select id="sr-term-bulk" class="input">${termOpts}</select>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;">
+      <!-- Student Picker -->
+      <div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+          <label class="lbl" style="margin-bottom:0;">Load by Class</label>
+        </div>
+        <div style="display:flex;gap:7px;margin-bottom:8px;">
+          <select id="sr-class-pick" class="input" style="flex:1;">
+            <option value="">— Select class —</option>${classOpts}
+          </select>
+          <button onclick="loadStudentsForReg()" class="btn btn-primary btn-sm"><i class="fas fa-search"></i></button>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+          <label class="lbl" style="margin-bottom:0;">Students <span style="font-size:10px;font-weight:400;">(Ctrl/⌘ = multi)</span></label>
+          <div style="display:flex;gap:4px;">
+            <button onclick="document.getElementById('sr-stu-sel').querySelectorAll('option').forEach(o=>o.selected=true)" class="btn btn-ghost btn-sm" style="font-size:10px;padding:2px 7px;">All</button>
+            <button onclick="document.getElementById('sr-stu-sel').querySelectorAll('option').forEach(o=>o.selected=false)" class="btn btn-ghost btn-sm" style="font-size:10px;padding:2px 7px;">None</button>
+          </div>
+        </div>
+        <select id="sr-stu-sel" class="input" multiple style="height:180px;"><option disabled>Load a class first</option></select>
+      </div>
+      <!-- Subject Picker -->
+      <div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+          <label class="lbl" style="margin-bottom:0;">Subjects <span style="font-size:10px;font-weight:400;">(Ctrl/⌘ = multi)</span></label>
+          <div style="display:flex;gap:4px;">
+            <button onclick="document.getElementById('sr-subj-sel').querySelectorAll('option').forEach(o=>o.selected=true)" class="btn btn-ghost btn-sm" style="font-size:10px;padding:2px 7px;">All</button>
+            <button onclick="document.getElementById('sr-subj-sel').querySelectorAll('option').forEach(o=>o.selected=false)" class="btn btn-ghost btn-sm" style="font-size:10px;padding:2px 7px;">None</button>
+          </div>
+        </div>
+        <select id="sr-subj-sel" class="input" multiple style="height:218px;">${subjOpts}</select>
+      </div>
+    </div>
+    <button onclick="bulkRegisterSubjects()" class="btn btn-primary" style="width:100%;justify-content:center;padding:13px;font-size:14px;"><i class="fas fa-paper-plane"></i> Register Selected Students for Selected Subjects</button>
+  </div>
+
+  <!-- ═══ VIEW / MANAGE EXISTING ═══ -->
+  <div class="card" style="padding:22px;max-width:780px;margin-bottom:18px;">
+    <div style="font-weight:700;font-size:14px;color:var(--br);margin-bottom:14px;"><i class="fas fa-search"></i> View / Manage Existing Registrations</div>
     <div style="display:flex;flex-direction:column;gap:12px;">
-      <div class="g2">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
         <div><label class="lbl">Class</label>
           <select id="sr-cid" class="input">
-            <option value="">Select Class</option>
-            ${(classes||[]).map(c=>`<option value="${c.id}">${c.name}${c.arm?' '+c.arm:''}</option>`).join('')}
+            <option value="">Select Class</option>${classOpts}
           </select>
         </div>
-        <div><label class="lbl">Session</label><select id="sr-sess" class="input"><option>2024/2025</option><option>2025/2026</option><option>2026/2027</option><option>2027/2028</option><option>2028/2029</option><option>2029/2030</option><option>2030/2031</option><option>2031/2032</option><option>2032/2033</option></select></div>
+        <div><label class="lbl">Session</label><select id="sr-sess" class="input">${sessOpts}</select></div>
       </div>
       <div><label class="lbl">Term</label>
-        <select id="sr-term" class="input">
-          <option>1st Term</option><option>2nd Term</option><option>3rd Term</option>
-        </select>
+        <select id="sr-term" class="input">${termOpts}</select>
       </div>
-      <div style="display:flex;gap:9px;">
-        <button onclick="loadClassSubjRegs()" class="btn btn-primary" style="flex:1;justify-content:center;"><i class="fas fa-search"></i> Load</button>
-        <button onclick="showSubjRegModal()" class="btn btn-outline"><i class="fas fa-plus"></i> Register for Student</button>
-      </div>
+      <button onclick="loadClassSubjRegs()" class="btn btn-primary" style="justify-content:center;"><i class="fas fa-search"></i> Load Registrations</button>
     </div>
   </div>
   <div id="sr-list"></div>`);
@@ -7023,6 +7167,54 @@ function highlightSubjCheck(el){
 }
 function selectAllSubjects(checked){
   document.querySelectorAll('input[name="subj-reg"]').forEach(c=>{c.checked=checked;highlightSubjCheck(c);});
+}
+
+async function loadStudentsForReg(){
+  const cid=document.getElementById('sr-class-pick')?.value;
+  if(!cid){toast('Select a class first.','error');return;}
+  const sel=document.getElementById('sr-stu-sel');
+  if(!sel) return;
+  sel.innerHTML='<option disabled>Loading…</option>';
+  const{data:studs}=await DB().from('students').select('id,full_name,admission_number').eq('class_id',cid).order('full_name');
+  if(!studs||!studs.length){sel.innerHTML='<option disabled>No students in this class.</option>';return;}
+  sel.innerHTML=studs.map(s=>`<option value="${s.id}" data-name="${s.full_name||''}" data-adm="${s.admission_number||''}" data-cid="${cid}">${s.full_name||'—'} (${s.admission_number||'—'})</option>`).join('');
+}
+
+async function bulkRegisterSubjects(){
+  const sess=document.getElementById('sr-sess-bulk')?.value||SCHOOL_SETTINGS.current_session||'';
+  const term=document.getElementById('sr-term-bulk')?.value||SCHOOL_SETTINGS.current_term||'1st Term';
+  const stuSel=document.getElementById('sr-stu-sel');
+  const subjSel=document.getElementById('sr-subj-sel');
+  if(!stuSel||!subjSel){toast('Selectors not found.','error');return;}
+  const studs=[...stuSel.selectedOptions].map(o=>({
+    id:o.value,name:o.dataset.name||o.text.split('(')[0].trim(),
+    adm:o.dataset.adm||'',cid:o.dataset.cid||''
+  })).filter(s=>s.id);
+  const subjs=[...subjSel.selectedOptions].map(o=>({id:o.value,name:o.text}));
+  if(!studs.length){toast('Select at least one student.','error');return;}
+  if(!subjs.length){toast('Select at least one subject.','error');return;}
+  const btn=document.querySelector('button[onclick="bulkRegisterSubjects()"]');
+  if(btn){btn.disabled=true;btn.innerHTML='<span class="spinner"></span> Registering…';}
+  let total=0,errors=0;
+  for(const st of studs){
+    // Get this student's class info
+    const{data:stData}=await DB().from('students').select('class_id,class_name').eq('id',st.id).single();
+    const classId=stData?.class_id||st.cid||'';
+    const className=stData?.class_name||'';
+    // Delete existing registrations for this student/session/term to avoid duplicates
+    await DB().from('subject_registrations').delete().eq('student_id',st.id).eq('session',sess).eq('term',term);
+    const records=subjs.map(s=>({
+      student_id:st.id,student_name:st.name,admission_number:st.adm,
+      class_id:classId,class_name:className,
+      subject_id:s.id,subject_name:s.name,session:sess,term
+    }));
+    const{error}=await DB().from('subject_registrations').insert(records);
+    if(error) errors++;
+    else total+=records.length;
+  }
+  if(btn){btn.disabled=false;btn.innerHTML='<i class="fas fa-paper-plane"></i> Register Selected Students for Selected Subjects';}
+  if(errors) toast(`⚠️ Completed with ${errors} error(s). ${total} registrations saved.`,'error');
+  else toast(`✅ ${total} subject registration${total!==1?'s':''} saved for ${studs.length} student${studs.length!==1?'s':''}!`);
 }
 
 async function submitSubjectReg(sess,term){
@@ -8241,6 +8433,22 @@ async function renderSchoolSettings(){
         </div>
         <div><label class="lbl">APK Download URL</label><input id="ss-apk-url" class="input" placeholder="https://github.com/nseobong69/vis-intl-schs-portal/releases/download/v1.0/VIS-Portal-signed.apk" value="${ss.apk_url||''}"></div>
       </div>
+      <!-- INVIGILATOR PIN -->
+      <div class="card" style="padding:26px;border-left:4px solid #EF4444;">
+        <div style="font-weight:700;font-size:15px;color:var(--br);margin-bottom:6px;"><i class="fas fa-lock" style="color:#EF4444;"></i> Exam Invigilator PIN</div>
+        <div style="font-size:12.5px;color:var(--brl);margin-bottom:14px;">This PIN is required by invigilators to authenticate during CBT exams, override auto-submission warnings, and confirm their presence. Keep it confidential.</div>
+        <div style="max-width:320px;display:flex;flex-direction:column;gap:10px;">
+          <div>
+            <label class="lbl">Invigilator PIN (4–8 digits)</label>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <input id="ss-invig-pin" class="input" type="password" placeholder="e.g. 1234" maxlength="8" value="${ss.invigilator_pin||''}" style="flex:1;letter-spacing:.1em;">
+              <button onclick="(function(){const i=document.getElementById('ss-invig-pin');i.type=i.type==='password'?'text':'password';})()" class="btn btn-ghost btn-sm" style="padding:9px 12px;" title="Toggle visibility"><i class="fas fa-eye"></i></button>
+            </div>
+          </div>
+          <div style="font-size:11.5px;color:var(--brl);"><i class="fas fa-shield-alt"></i> Invigilators enter this PIN on the exam screen to verify their identity. It is checked in real-time against this stored value.</div>
+        </div>
+      </div>
+
       <!-- SAVE -->
       <button onclick="saveSchoolSettings()" class="btn btn-primary" style="padding:14px;font-size:15px;justify-content:center;"><i class="fas fa-save"></i> Save All School Settings</button>
     </div>`);
@@ -8334,6 +8542,7 @@ async function saveSchoolSettings(){
     emailjs_public_key:($('ss-ejs-key')?.value||'').trim()||null,
     reply_email:($('ss-reply-email')?.value||'').trim()||null,
     apk_url:($('ss-apk-url')?.value||'').trim()||null,
+    invigilator_pin:($('ss-invig-pin')?.value||'').trim()||null,
     updated_at:new Date().toISOString()
   };
   const{error}=await DB().from('school_settings').update(upd).eq('id',1);
@@ -9204,12 +9413,15 @@ function detachExamMedia(){
   if(window._examAudioCtx){window._examAudioCtx.close().catch(()=>{});window._examAudioCtx=null;}
   if(window._noiseInterval){clearInterval(window._noiseInterval);window._noiseInterval=null;}
   if(window._snapTimers){window._snapTimers.forEach(t=>clearTimeout(t));window._snapTimers=[];}
+  // Clean up freeze detection
+  if(window._freezeCheckInterval){clearInterval(window._freezeCheckInterval);window._freezeCheckInterval=null;}
+  if(typeof window._detachFreezeCleanup==='function'){window._detachFreezeCleanup();window._detachFreezeCleanup=null;}
   // Fix 5: revoke blob URL to free memory
   if(window._verifiedFaceSnapBlob){try{URL.revokeObjectURL(window._verifiedFaceSnapBlob);}catch(e){}window._verifiedFaceSnapBlob=null;}
   const pip=document.getElementById('cbt-video-pip');if(pip)pip.remove();
   const nw=document.getElementById('cbt-noise-warn');if(nw)nw.remove();
   window._noiseWarnings=0;window._snapCount=0;
-  }
+}
 // ═══════════════════════════════════════════
 // CBT ANTI-CHEAT
 // ═══════════════════════════════════════════
@@ -9370,6 +9582,81 @@ async function _startLookAwayDetection(examId){
   let _warnedOnce=false;        // first 2s warning issued
   let _countdownActive=false;   // 4s countdown running
   let _faceCheckCooldown=false;
+
+  // ── FREEZE / STILL-IMAGE DETECTION ────────────────────────────────────────
+  // Detects if the live video feed is a static/frozen image (e.g. a printed photo
+  // held in front of the camera, or a screen recording trick).
+  // Strategy: compare pixel luminance arrays across 2-second intervals.
+  // If the sum of absolute differences between frames is below a motion threshold
+  // for FREEZE_CONSEC consecutive checks, the video is declared static/frozen.
+  let _prevPixelData=null;
+  let _freezeCount=0;
+  const FREEZE_CONSEC=3;       // 3 consecutive near-identical frames (~6s)
+  const FREEZE_THRESHOLD=180;  // mean absolute pixel diff — very still = frozen
+  let _freezeWarned=false;
+  let _freezeSubmitTimer=null;
+
+  const _capturePixels=()=>{
+    try{
+      if(!vid||vid.readyState<2) return null;
+      const fc=document.createElement('canvas');fc.width=80;fc.height=60;
+      fc.getContext('2d').drawImage(vid,0,0,80,60);
+      return fc.getContext('2d').getImageData(0,0,80,60).data;
+    }catch(e){return null;}
+  };
+  const _pixelDiff=(a,b)=>{
+    if(!a||!b||a.length!==b.length) return 9999;
+    let sum=0,n=a.length;
+    for(let i=0;i<n;i+=4) sum+=Math.abs(a[i]-b[i])+Math.abs(a[i+1]-b[i+1])+Math.abs(a[i+2]-b[i+2]);
+    return sum/(n/4);
+  };
+
+  window._freezeCheckInterval=setInterval(()=>{
+    if(!window._examActive){clearInterval(window._freezeCheckInterval);window._freezeCheckInterval=null;return;}
+    const cur=_capturePixels();
+    if(!cur){_prevPixelData=null;return;}
+    if(_prevPixelData){
+      const diff=_pixelDiff(cur,_prevPixelData);
+      if(diff<FREEZE_THRESHOLD){
+        _freezeCount++;
+        if(_freezeCount>=FREEZE_CONSEC&&!_freezeWarned){
+          _freezeWarned=true;
+          const name=(UP?.full_name||'Student').split(' ')[0];
+          toast('🚨 '+name+': Static/frozen image detected in camera! Show live movement NOW.','error');
+          _speakWarning(name+', your camera appears to be showing a still image or is frozen. Nod your head or move immediately.');
+          // Log violation
+          try{DB().from('cbt_violations').insert({student_id:CU?.id||null,student_name:UP?.full_name||'Unknown',admission_number:UP?.admission_number||null,violation_type:'frozen_camera_detected',details:'Mean pixel diff='+diff.toFixed(1)+' over '+FREEZE_CONSEC+' checks',created_at:new Date().toISOString()});}catch(e){}
+          // Give 6s to show movement, then force submit
+          let cd=6;
+          _freezeSubmitTimer=setInterval(()=>{
+            if(!window._examActive){clearInterval(_freezeSubmitTimer);_freezeSubmitTimer=null;return;}
+            cd--;
+            if(cd<=0){
+              clearInterval(_freezeSubmitTimer);_freezeSubmitTimer=null;
+              if(window._examActive)_forceExamSubmit('Static/frozen camera image — possible photo substitution detected');
+            }else{
+              toast('🚨 Frozen image — auto-submit in '+cd+'s! Move to cancel.','error');
+            }
+          },1000);
+        }
+      }else{
+        // Motion detected — reset freeze state
+        if(_freezeWarned&&_freezeSubmitTimer){
+          clearInterval(_freezeSubmitTimer);_freezeSubmitTimer=null;
+          toast('✅ Motion detected. Continuing exam.','success');
+        }
+        _freezeCount=0;_freezeWarned=false;
+      }
+    }
+    _prevPixelData=cur;
+  },2000);
+  // Attach cleanup to detachExamMedia
+  const _origDetach=window._detachFreezeCleanup||null;
+  window._detachFreezeCleanup=()=>{
+    clearInterval(window._freezeCheckInterval);window._freezeCheckInterval=null;
+    if(_freezeSubmitTimer){clearInterval(_freezeSubmitTimer);_freezeSubmitTimer=null;}
+  };
+  // ─────────────────────────────────────────────────────────────────────────
 
   const _resetNoFace=()=>{
     _noFaceStart=null;
