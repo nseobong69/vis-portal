@@ -9930,7 +9930,7 @@ function buildBrandedEmailHtml({toName='Recipient', subject='', bodyText='', bod
   const schoolName  = SS.school_name  || 'Victorious International Schools';
   const motto       = SS.motto        || 'Wisdom, Knowledge and Success';
   const address     = SS.address      || '';
-  const phone       = SS.phone        || '';
+  const phone       = SS.phone1 || SS.phone2 || '';
   const logoUrl     = SS.logo_url     || '';
   const primaryHex  = SS.primary_color|| '#5D4037';
   const year        = new Date().getFullYear();
