@@ -513,7 +513,9 @@ let SCHOOL_SETTINGS={
   phone1:'', phone2:'', email:'', logo_url:'',
   current_session:'2024/2025', current_term:'1st Term',
   term_end_date:null, next_term_date:null,
-  primary_color:'#5D4037', secondary_color:'#F8F1E3'
+  primary_color:'#5D4037', secondary_color:'#F8F1E3',
+  bank_name:'', bank_account_name:'', bank_account_number:'',
+  payment_phone:'', admission_fee_default:0, admission_fee_configs:{}
 };
 const DB = () => { if(!_sb) _sb=window.supabase.createClient(SB_URL,SB_KEY); return _sb; };
 
@@ -848,7 +850,7 @@ async function walkinCodeLogin(){
     document.getElementById('btn-portal-nav').style.display='none';
     document.getElementById('nav-user').style.display='flex';
     document.getElementById('nav-notif').style.display='none';
-    try{const{data:ss}=await DB().from('school_settings').select('*').eq('id',1).single();if(ss)SCHOOL_SETTINGS=ss;}catch(e){}
+    try{const{data:ss}=await DB().from('school_settings').select('*').eq('id',1).single();if(ss){SCHOOL_SETTINGS=ss;if(typeof ss.admission_fee_configs==='string'){try{SCHOOL_SETTINGS.admission_fee_configs=JSON.parse(ss.admission_fee_configs);}catch(e){SCHOOL_SETTINGS.admission_fee_configs={};}}window._admFeeConfigs=SCHOOL_SETTINGS.admission_fee_configs||{};}}catch(e){}
     applySchoolColors();applyLogoEverywhere();applyMottoEverywhere();
     const nm=UP.full_name;
     document.getElementById('nav-name').textContent=nm;
@@ -1153,6 +1155,8 @@ const MENUS={
     {i:'fa-users-cog',l:'Parents',f:'renderParents'},
 {i:'fa-envelope-open-text',l:'Email Center',f:'renderEmailCenter'},
     {i:'fa-user-plus',l:'Sign Up Profiles',f:'renderSignUpProfiles'},
+    {i:'fa-receipt',l:'Fee Receipts',f:'renderFeeReceipts'},
+    {i:'fa-award',l:'Scholarship',f:'renderScholarship'},
   ],
   admin:[
     {i:'fa-home',l:'Dashboard',f:'renderDashboard'},
@@ -1181,6 +1185,8 @@ const MENUS={
     {i:'fa-users-cog',l:'Parents',f:'renderParents'},
 {i:'fa-envelope-open-text',l:'Email Center',f:'renderEmailCenter'},
     {i:'fa-user-plus',l:'Sign Up Profiles',f:'renderSignUpProfiles'},
+    {i:'fa-receipt',l:'Fee Receipts',f:'renderFeeReceipts'},
+    {i:'fa-award',l:'Scholarship',f:'renderScholarship'},
     // NOTE: Admin does NOT have Settings or School Settings — super_admin only
   ],
   proprietor:[
@@ -1207,6 +1213,8 @@ const MENUS={
     {i:'fa-users-cog',l:'Parents',f:'renderParents'},
 {i:'fa-envelope-open-text',l:'Email Center',f:'renderEmailCenter'},
     {i:'fa-user-plus',l:'Sign Up Profiles',f:'renderSignUpProfiles'},
+    {i:'fa-receipt',l:'Fee Receipts',f:'renderFeeReceipts'},
+    {i:'fa-award',l:'Scholarship',f:'renderScholarship'},
     // NOTE: NO Settings, NO School Settings
   ],
   head_teacher:[
@@ -1287,6 +1295,8 @@ const MENUS={
     {i:'fa-home',l:'Dashboard',f:'renderDashboard'},
     {i:'fa-money-bill-wave',l:'Fees & Payments',f:'renderFinance'},
     {i:'fa-user-check',l:'Student Clearance',f:'renderClearance'},
+    {i:'fa-receipt',l:'Fee Receipts',f:'renderFeeReceipts'},
+    {i:'fa-award',l:'Scholarship',f:'renderScholarship'},
     {i:'fa-bullhorn',l:'Announcements',f:'renderAnnouncements'},
   ],
   student:[
@@ -1819,7 +1829,7 @@ async function viewClassStudents(id,name){
   const{data:students}=await DB().from('students').select('*').eq('class_id',id).order('full_name');
   setContent(`<div class="card" style="overflow:hidden;">
     <div style="padding:14px 18px;border-bottom:1px solid var(--crd);"><input class="input" placeholder="🔍 Search…" style="max-width:240px;padding:8px 12px;" oninput="filterTbl(this,'vc-tb')"> <span style="font-size:12.5px;color:var(--brl);margin-left:10px;">${(students||[]).length} ${pupilOrStudent(name, true)}</span></div>
-    <div style="overflow-x:auto;"><table class="tbl"><thead><tr><th>Adm No</th><th>Full Name</th><th>Gender</th><th>Parent</th><th>Status</th></tr></thead>
+    <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;"><table class="tbl" style="min-width:max-content;"><thead><tr><th>Adm No</th><th>Full Name</th><th>Gender</th><th>Parent</th><th>Status</th></tr></thead>
     <tbody id="vc-tb">${(students||[]).map(s=>`<tr><td style="font-weight:600;color:var(--br);">${s.admission_number}</td><td>${s.full_name}</td><td>${s.gender||'—'}</td><td style="color:var(--brl);">${s.parent_name||'—'}</td><td>${s.blocked?'<span class="badge br-b"><i class="fas fa-lock"></i> Blocked</span>':'<span class="badge bg"><i class="fas fa-check"></i> Active</span>'}</td></tr>`).join('')||'<tr><td colspan="5" style="text-align:center;padding:28px;color:var(--brl);">No students in this class.</td></tr>'}</tbody>
     </table></div></div>`);
 }
@@ -1834,7 +1844,7 @@ async function renderSubjects(){
   setContent(`<div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;">
     <div class="card" style="overflow:hidden;">
       <div style="padding:14px 18px;border-bottom:1px solid var(--crd);font-weight:700;font-size:14px;color:var(--br);">All Subjects (${(subjects||[]).length})</div>
-      <div style="overflow-x:auto;"><table class="tbl"><thead><tr><th>Code</th><th>Subject</th><th></th></tr></thead><tbody>
+      <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;"><table class="tbl" style="min-width:max-content;"><thead><tr><th>Code</th><th>Subject</th><th></th></tr></thead><tbody>
         ${(subjects||[]).map(s=>`<tr><td><span class="badge bn">${s.code||'—'}</span></td><td style="font-weight:600;color:var(--br);">${s.name}</td><td><button onclick="deleteSubject('${s.id}')" class="btn btn-sm btn-danger" style="padding:4px 8px;"><i class="fas fa-trash"></i></button></td></tr>`).join('')||'<tr><td colspan="3" style="text-align:center;padding:28px;color:var(--brl);">No subjects yet.</td></tr>'}
       </tbody></table></div>
     </div>
@@ -1970,7 +1980,7 @@ async function renderStudents(){
         </select>
         <span style="font-size:12.5px;color:var(--brl);">${students.length} ${pupilOrStudent('',true)}</span>
       </div>
-      <div style="overflow-x:auto;"><table class="tbl"><thead><tr><th>Adm No</th><th>Full Name</th><th>Class</th><th>Type</th><th>Gender</th><th>Parent</th><th>Status</th><th>Actions</th></tr></thead>
+      <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;"><table class="tbl" style="min-width:max-content;"><thead><tr><th>Adm No</th><th>Full Name</th><th>Class</th><th>Type</th><th>Gender</th><th>Parent</th><th>Status</th><th>Actions</th></tr></thead>
       <tbody id="stu-tb">${students.map(s=>stuRow(s)).join('')||'<tr><td colspan="8" style="text-align:center;padding:28px;color:var(--brl);">No students found. <a href="#" onclick="showAddStudentModal()" style="color:var(--br);font-weight:600;">Add first student</a></td></tr>'}</tbody>
       </table></div></div>`);
   }catch(e){setContent(`<div class="card" style="padding:32px;text-align:center;color:#EF4444;">${e.message}</div>`);}
@@ -1984,7 +1994,8 @@ function stuRow(s){
     :`<span class="badge" style="background:#D1FAE5;color:#059669;font-size:10.5px;">✦ New</span>`;
   const canDel=ROLE==='super_admin';
   const delBtn=canDel?`<button onclick="deleteStudent('${s.id}','${(s.full_name||'').replace(/'/g,"&#39;")}')" class="btn btn-sm btn-danger" style="padding:5px 9px;" title="Delete Student"><i class="fas fa-trash"></i></button>`:'';
-  return `<tr data-cid="${s.class_id||''}"><td>${admCell}</td><td style="font-weight:600;">${s.full_name}</td><td><span class="badge bn">${s.class_name||'—'}</span></td><td>${typeBadge}</td><td>${s.gender||'—'}</td><td style="color:var(--brl);">${s.parent_name||'—'}</td><td>${s.blocked?'<span class="badge br-b"><i class="fas fa-lock"></i> Blocked</span>':s.has_account?'<span class="badge bg"><i class="fas fa-check"></i> Active</span>':'<span class="badge bo"><i class="fas fa-user-clock"></i> Pending</span>'}</td><td style="display:flex;gap:5px;flex-wrap:wrap;"><button onclick="editStudent('${s.id}')" class="btn btn-sm btn-ghost" style="padding:5px 9px;" title="Edit"><i class="fas fa-edit"></i></button><button onclick="toggleBlock('${s.id}',${!s.blocked})" class="btn btn-sm ${s.blocked?'btn-success':'btn-danger'}" style="padding:5px 9px;" title="${s.blocked?'Unblock':'Block'}"><i class="fas fa-${s.blocked?'lock-open':'lock'}"></i></button>${delBtn}</td></tr>`;
+  const scholarBadge=s.scholarship?`<span class="badge" style="background:#EDE9FE;color:#7C3AED;font-size:10px;"><i class="fas fa-award"></i> Scholar</span>`:'';
+  return `<tr data-cid="${s.class_id||''}"><td>${admCell}</td><td style="font-weight:600;">${s.full_name} ${scholarBadge}</td><td><span class="badge bn">${s.class_name||'—'}</span></td><td>${typeBadge}</td><td>${s.gender||'—'}</td><td style="color:var(--brl);">${s.parent_name||'—'}</td><td>${s.blocked?'<span class="badge br-b"><i class="fas fa-lock"></i> Blocked</span>':s.has_account?'<span class="badge bg"><i class="fas fa-check"></i> Active</span>':'<span class="badge bo"><i class="fas fa-user-clock"></i> Pending</span>'}</td><td style="display:flex;gap:5px;flex-wrap:wrap;"><button onclick="editStudent('${s.id}')" class="btn btn-sm btn-ghost" style="padding:5px 9px;" title="Edit"><i class="fas fa-edit"></i></button><button onclick="toggleBlock('${s.id}',${!s.blocked})" class="btn btn-sm ${s.blocked?'btn-success':'btn-danger'}" style="padding:5px 9px;" title="${s.blocked?'Unblock':'Block'}"><i class="fas fa-${s.blocked?'lock-open':'lock'}"></i></button>${delBtn}</td></tr>`;
 }
 async function deleteStudent(id, name){
   if(ROLE!=='super_admin'){toast('Only Super Admin can delete students.','error');return;}
@@ -2068,6 +2079,12 @@ async function showAddStudentModal(){
       <div><label class="lbl">Parent / Guardian Phone</label><input id="ns-phn" class="input" type="tel" placeholder="080xxxxxxxx"></div>
       <div style="grid-column:span 2;"><label class="lbl">Parent / Guardian Address</label><input id="ns-par-address" class="input" placeholder="Parent/guardian residential address"></div>
     </div>
+      <div style="grid-column:span 2;">
+        <label style="display:flex;align-items:center;gap:9px;font-size:13.5px;cursor:pointer;padding:11px 14px;border:2px solid var(--crd);border-radius:11px;" id="ns-scholar-lbl">
+          <input type="checkbox" id="ns-scholarship" style="accent-color:#7C3AED;width:17px;height:17px;" onchange="document.getElementById('ns-scholar-lbl').style.borderColor=this.checked?'#7C3AED':'var(--crd)'">
+          <i class="fas fa-award" style="color:#7C3AED;"></i> <strong>Scholarship Student</strong> <span style="font-size:11.5px;color:var(--brl);font-weight:400;">— Fees will not be auto-added to invoices unless overridden</span>
+        </label>
+      </div>
     <div style="display:flex;gap:9px;margin-top:18px;"><button onclick="addStudent()" class="btn btn-primary" style="flex:1;justify-content:center;padding:12px;font-size:14px;"><i class="fas fa-user-plus"></i> Register Student</button><button onclick="closeModal()" class="btn btn-outline" style="padding:12px 18px;">Cancel</button></div>
   </div>`,'600px');
 }
@@ -2098,7 +2115,9 @@ async function addStudent(){
     parent_phone:$('ns-phn').value.trim()||null,
     parent_address:$('ns-par-address').value.trim()||null,
     has_account:false,blocked:false,cleared:false,
-    student_type:($('ns-stype')?.value||'new')
+    student_type:($('ns-stype')?.value||'new'),
+    scholarship:$('ns-scholarship')?.checked||false,
+    class_join_year:new Date().getFullYear()
   });
   if(error){toast('Error: '+error.message,'error');return;}
   // Auto-send login email if email is provided
@@ -2124,6 +2143,13 @@ async function editStudent(id){
       <div><label class="lbl">Class</label><select id="es-cid" class="input">${(classes||[]).map(c=>`<option value="${c.id}" data-n="${c.name}${c.arm?' '+c.arm:''}"${s.class_id===c.id?' selected':''}>${c.name}${c.arm?' '+c.arm:''}</option>`).join('')}</select></div>
       <div><label class="lbl">Parent Name</label><input id="es-par" class="input" value="${s.parent_name||''}"></div>
       <div><label class="lbl">Parent Phone</label><input id="es-phn" class="input" value="${s.parent_phone||''}"></div>
+      <div style="grid-column:span 2;">
+        <label style="display:flex;align-items:center;gap:9px;font-size:13.5px;cursor:pointer;padding:11px 14px;border:2px solid ${s.scholarship?'#7C3AED':'var(--crd)'};border-radius:11px;" id="es-scholar-lbl">
+          <input type="checkbox" id="es-scholarship" ${s.scholarship?'checked':''} style="accent-color:#7C3AED;width:17px;height:17px;" onchange="document.getElementById('es-scholar-lbl').style.borderColor=this.checked?'#7C3AED':'var(--crd)'">
+          <i class="fas fa-award" style="color:#7C3AED;"></i> <strong>Scholarship Student</strong>
+          <span style="font-size:11.5px;color:var(--brl);font-weight:400;">— Fees not auto-added to invoices unless overridden</span>
+        </label>
+      </div>
       ${hasEmail
         ?`<div style="grid-column:span 2;"><label class="lbl">Email</label><input id="es-eml" class="input" type="email" value="${s.email||''}"><div style="font-size:11px;color:var(--brl);margin-top:3px;"><i class="fas fa-info-circle"></i> Updating email will require OTP verification.</div></div>`
         :`<div style="grid-column:span 2;"><label class="lbl">Add Email Address <span style="font-weight:400;color:var(--brl);">(optional — OTP will be sent for confirmation)</span></label><input id="es-eml" class="input" type="email" placeholder="Add email to enable notifications"></div>`}
@@ -2146,7 +2172,8 @@ async function saveStudent(id){
     gender:$('es-gender')?.value||null,
     class_id:sel.value,class_name:sel.options[sel.selectedIndex]?.dataset?.n||'',
     parent_name:$('es-par').value,parent_phone:$('es-phn').value,
-    email:$('es-eml')?.value.trim().toLowerCase()||null
+    email:$('es-eml')?.value.trim().toLowerCase()||null,
+    scholarship:$('es-scholarship')?.checked||false
   }).eq('id',id);
   if(error){toast('Error: '+error.message,'error');return;}
   toast('✅ '+pupilOrStudent('')+' updated!');closeModal();renderStudents();
@@ -2295,7 +2322,7 @@ async function renderStaff(){
     const{data:staff}=await DB().from('profiles').select('*').order('full_name');
     setContent(`<div class="card" style="overflow:hidden;">
       <div style="padding:14px 18px;border-bottom:1px solid var(--crd);"><input class="input" placeholder="🔍 Search staff…" style="max-width:230px;padding:8px 12px;" oninput="filterTbl(this,'stf-tb')"></div>
-      <div style="overflow-x:auto;"><table class="tbl"><thead><tr><th>Name</th><th>Email</th><th>Staff Code</th><th>Role</th><th>Actions</th></tr></thead>
+      <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;"><table class="tbl" style="min-width:max-content;"><thead><tr><th>Name</th><th>Email</th><th>Staff Code</th><th>Role</th><th>Actions</th></tr></thead>
       <tbody id="stf-tb">${(staff||[]).map(s=>`<tr><td style="font-weight:600;color:var(--br);">${s.full_name}</td><td style="color:var(--brl);">${s.email}</td><td>${s.staff_code||'—'}</td><td><span class="badge bn">${(s.role||'—').toUpperCase()}</span></td><td style="display:flex;gap:5px;"><button onclick="editStaff('${s.id}')" class="btn btn-sm btn-ghost" style="padding:5px 9px;"><i class="fas fa-edit"></i></button>${ROLE==='super_admin'?`<button onclick="removeStaff('${s.id}','${(s.full_name||'').replace(/'/g,"&#39;")}')" class="btn btn-sm btn-danger" style="padding:5px 9px;" title="Delete Staff (Super Admin only)"><i class="fas fa-trash"></i></button>`:''}</td></tr>`).join('')||'<tr><td colspan="5" style="text-align:center;padding:28px;color:var(--brl);">No staff found.</td></tr>'}</tbody>
       </table></div></div>`);
   }catch(e){setContent(`<div class="card" style="padding:32px;text-align:center;color:#EF4444;">${e.message}</div>`);}
@@ -2456,7 +2483,7 @@ async function renderParents(){
     const{data:parents}=await DB().from('parents').select('*').order('full_name');
     setContent(`<div class="card" style="overflow:hidden;">
       <div style="padding:14px 18px;border-bottom:1px solid var(--crd);"><input class="input" placeholder="🔍 Search parents…" style="max-width:230px;padding:8px 12px;" oninput="filterTbl(this,'par-tb')"></div>
-      <div style="overflow-x:auto;"><table class="tbl"><thead><tr><th>Full Name</th><th>Email</th><th>Phone</th><th>Linked Student(s)</th><th>Status</th><th>Actions</th></tr></thead>
+      <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;"><table class="tbl" style="min-width:max-content;"><thead><tr><th>Full Name</th><th>Email</th><th>Phone</th><th>Linked Student(s)</th><th>Status</th><th>Actions</th></tr></thead>
       <tbody id="par-tb">${(parents||[]).map(p=>`<tr>
         <td style="font-weight:600;color:var(--br);">${p.full_name}</td>
         <td style="color:var(--brl);">${p.email||'—'}</td>
@@ -2744,7 +2771,7 @@ async function loadSheet(){
         <button onclick="showBlockResultModal('${cid}','${term}','${sess}')" class="btn btn-sm btn-danger"><i class="fas fa-lock"></i> Block Results</button>
       </div>
     </div>
-    <div style="overflow-x:auto;"><table class="tbl"><thead><tr><th>#</th><th>Student</th><th>Adm No</th><th>CA (30)</th><th>Exam (70)</th><th>Total</th><th>Grade</th><th>Remark</th></tr></thead>
+    <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;"><table class="tbl" style="min-width:max-content;"><thead><tr><th>#</th><th>Student</th><th>Adm No</th><th>CA (30)</th><th>Exam (70)</th><th>Total</th><th>Grade</th><th>Remark</th></tr></thead>
     <tbody id="rs-tbody">${(students||[]).map((s,i)=>{const ex=exMap[s.id],ca=ex?.ca_score??'',em=ex?.exam_score??'',tot=ca!==''&&em!==''?(+ca)+(+em):'—',gd=tot!=='—'?grade(tot):{g:'—',r:'—',c:'#999'};
     return `<tr data-sid="${s.id}" data-adm="${s.admission_number}" data-name="${s.full_name}"><td>${i+1}</td><td style="font-weight:600;color:var(--br);">${s.full_name}</td><td style="color:var(--brl);">${s.admission_number}</td>
     <td><input type="number" class="ca" value="${ca}" min="0" max="30" style="width:62px;border:1.5px solid var(--crd);border-radius:8px;padding:5px 7px;font-size:13px;text-align:center;" oninput="reCalc(this,${i})"></td>
@@ -5681,17 +5708,21 @@ async function invLoadStudents(){
         const badgeCls=status==='paid'?'bg':status==='partial'?'bo':status==='unpaid'?'br-b':'';
         const stype=s.student_type||'new';
         const typeBadge=stype==='old'?'<span style="background:#EDE9FE;color:#7C3AED;font-size:10px;padding:2px 7px;border-radius:10px;font-weight:600;">↩ Old</span>':'<span style="background:#D1FAE5;color:#059669;font-size:10px;padding:2px 7px;border-radius:10px;font-weight:600;">✦ New</span>';
+        const isScholar=s.scholarship===true||s.scholarship==='true';
+        const scholarBadgeInv=isScholar?'<span style="background:#EDE9FE;color:#7C3AED;font-size:10px;padding:2px 7px;border-radius:10px;font-weight:600;"><i class=\"fas fa-award\"></i> Scholar</span>':'';
         return`<tr data-sid="${s.id}"
                    data-stype="${stype}"
                    data-sname="${(s.full_name||'').replace(/"/g,'&quot;')}"
                    data-adm="${s.admission_number||''}"
-                   data-cname="${cn}">
+                   data-cname="${cn}"
+                   style="${isScholar?'background:#F5F3FF;opacity:.85;':''}">
           <td>
-            <input type="checkbox" class="inv-chk" value="${s.id}" checked
+            <input type="checkbox" class="inv-chk" value="${s.id}" ${isScholar?'':'checked'}
               style="accent-color:var(--br);" onchange="invUpdateCount()">
+            ${isScholar?`<div style="margin-top:3px;font-size:10px;color:#7C3AED;font-style:italic;">On scholarship<br><label style="display:flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" class="inv-scholar-override" style="accent-color:#7C3AED;width:12px;height:12px;"> Override</label></div>`:''}
           </td>
           <td style="font-weight:600;color:var(--br);">
-            ${s.full_name}
+            ${s.full_name} ${scholarBadgeInv}
             <div style="font-size:10px;color:var(--brl);">${s.admission_number||''}</div>
           </td>
           <td>${typeBadge}</td>
@@ -5795,9 +5826,20 @@ async function saveInvoices(printAfter=false){
   let saved=0, errors=0, lastErr='';
   const savedIds=[];
 
+  // Load scholarship students to skip them
+  const{data:scholarStudents}=await DB().from('students').select('id').eq('scholarship',true);
+  const scholarIds=new Set((scholarStudents||[]).map(s=>s.id));
+
   for(const row of checked){
     const sid   = row.dataset.sid;
     const sname = row.dataset.sname;
+    // Skip scholarship students unless there's an override checkbox
+    const overrideEl=row.querySelector('.inv-scholar-override');
+    if(scholarIds.has(sid)&&!overrideEl?.checked){
+      saved++;// count as processed but don't create fee
+      row.style.background='#EDE9FE';
+      continue;
+    }
     const adm   = row.dataset.adm;
     const cname = row.dataset.cname;
     const ftype = row.querySelector('.inv-ftype')?.value.trim()||'School Fee';
@@ -6896,7 +6938,7 @@ async function renderClearance(){
         <input class="input" placeholder="🔍 Name / Adm No…" style="max-width:220px;padding:8px 12px;" oninput="filterTbl(this,'clr-tb')"></div>
     </div>
     <div class="card" style="overflow:hidden;">
-      <div style="overflow-x:auto;"><table class="tbl"><thead><tr>
+      <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;"><table class="tbl" style="min-width:max-content;"><thead><tr>
         <th>Student</th><th>Adm No</th><th>Class</th>
         <th>Fee Status</th><th>Amount Paid</th><th>Balance</th>
         <th>Results</th><th>Actions</th>
@@ -7334,7 +7376,7 @@ async function _renderSubjRegs(cid,sess,term,area){
       <span>Registered Students — ${term} · ${sess}</span>
       <span class="badge bg" style="font-size:11px;"><i class="fas fa-circle" style="font-size:8px;animation:pulse 1s infinite;"></i> Live</span>
     </div>
-    <div style="overflow-x:auto;"><table class="tbl">
+    <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;"><table class="tbl" style="min-width:max-content;">
       <thead><tr><th>#</th><th>Student</th><th>Adm No</th><th>Subjects</th><th>Count</th></tr></thead>
       <tbody>
         ${Object.entries(byStudent).map(([sid,d],i)=>`<tr>
@@ -8486,6 +8528,39 @@ async function renderSchoolSettings(){
         </div>
       </div>
 
+      <!-- BANK ACCOUNT & PAYMENT DETAILS -->
+      <div class="card" style="padding:26px;">
+        <div style="font-weight:700;font-size:15px;color:var(--br);margin-bottom:18px;"><i class="fas fa-university"></i> Bank Account &amp; Payment Details</div>
+        <div style="display:flex;flex-direction:column;gap:13px;">
+          <div class="g2">
+            <div><label class="lbl">Bank Name</label><input id="ss-bank-name" class="input" placeholder="e.g. First Bank Nigeria" value="${ss.bank_name||''}"></div>
+            <div><label class="lbl">Account Name</label><input id="ss-bank-acct-name" class="input" placeholder="e.g. Victorious International Schools" value="${ss.bank_account_name||''}"></div>
+          </div>
+          <div class="g2">
+            <div><label class="lbl">Account Number</label><input id="ss-bank-acct-num" class="input" placeholder="e.g. 0123456789" value="${ss.bank_account_number||''}"></div>
+            <div><label class="lbl">Payment Phone (for cash/transfer)</label><input id="ss-payment-phone" class="input" type="tel" placeholder="e.g. 08012345678" value="${ss.payment_phone||ss.phone1||''}"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ADMISSION FEE CONFIGURATION -->
+      <div class="card" style="padding:26px;">
+        <div style="font-weight:700;font-size:15px;color:var(--br);margin-bottom:6px;"><i class="fas fa-file-invoice-dollar"></i> Admission Fee Configuration</div>
+        <div style="font-size:12.5px;color:var(--brl);margin-bottom:16px;">Set the admission fee per class. This appears on all admission forms and must be paid before admission is confirmed.</div>
+        <div style="display:flex;flex-direction:column;gap:13px;">
+          <div><label class="lbl">Default Admission Fee (₦) — applies to all classes unless overridden per class</label>
+            <input id="ss-adm-fee-default" class="input" type="number" min="0" placeholder="e.g. 5000" value="${ss.admission_fee_default||0}">
+          </div>
+          <div>
+            <div style="font-weight:600;font-size:13px;color:var(--br);margin-bottom:10px;">Per-Class Fee Override (optional)</div>
+            <div id="ss-adm-fee-classes-list" style="display:flex;flex-direction:column;gap:8px;max-height:260px;overflow-y:auto;border:1.5px solid var(--crd);border-radius:11px;padding:10px;">
+              <div style="text-align:center;padding:12px;color:var(--brl);font-size:12.5px;">Click Load Classes to set per-class fees</div>
+            </div>
+            <button onclick="loadAdmFeeClassList()" class="btn btn-outline btn-sm" style="margin-top:8px;"><i class="fas fa-sync"></i> Load Classes</button>
+          </div>
+        </div>
+      </div>
+
       <!-- SAVE -->
       <button onclick="saveSchoolSettings()" class="btn btn-primary" style="padding:14px;font-size:15px;justify-content:center;"><i class="fas fa-save"></i> Save All School Settings</button>
     </div>`);
@@ -8580,6 +8655,12 @@ async function saveSchoolSettings(){
     reply_email:($('ss-reply-email')?.value||'').trim()||null,
     apk_url:($('ss-apk-url')?.value||'').trim()||null,
     invigilator_pin:($('ss-invig-pin')?.value||'').trim()||null,
+    bank_name:($('ss-bank-name')?.value||'').trim()||null,
+    bank_account_name:($('ss-bank-acct-name')?.value||'').trim()||null,
+    bank_account_number:($('ss-bank-acct-num')?.value||'').trim()||null,
+    payment_phone:($('ss-payment-phone')?.value||'').trim()||null,
+    admission_fee_default:parseFloat($('ss-adm-fee-default')?.value)||0,
+    admission_fee_configs:JSON.stringify(window._admFeeConfigs||SCHOOL_SETTINGS.admission_fee_configs||{}),
     updated_at:new Date().toISOString()
   };
   const{error}=await DB().from('school_settings').update(upd).eq('id',1);
@@ -8592,6 +8673,50 @@ async function saveSchoolSettings(){
   applyMottoEverywhere();
   toast('✅ All school settings saved and applied!');
 }
+// ═══════════════════════════════════════════
+// ADMISSION FEE HELPERS
+// ═══════════════════════════════════════════
+window._admFeeConfigs={};
+async function loadAdmFeeClassList(){
+  const{data:classes}=await DB().from('classes').select('id,name,arm').order('name');
+  const cfgs=SCHOOL_SETTINGS.admission_fee_configs||{};
+  const list=document.getElementById('ss-adm-fee-classes-list');
+  if(!list) return;
+  list.innerHTML=(classes||[]).map(c=>{
+    const k=c.id; const n=c.name+(c.arm?' '+c.arm:'');
+    const v=cfgs[k]||'';
+    return`<div style="display:flex;align-items:center;gap:10px;">
+      <span style="flex:1;font-size:13px;font-weight:600;color:var(--br);">${n}</span>
+      <input class="input adm-fee-cls-inp" data-id="${k}" type="number" min="0" placeholder="Use default" value="${v}" style="width:130px;padding:7px 11px;">
+    </div>`;
+  }).join('');
+  window._admFeeConfigs=cfgs;
+  // Collect on change
+  list.querySelectorAll('.adm-fee-cls-inp').forEach(inp=>{
+    inp.addEventListener('input',()=>{
+      const id=inp.dataset.id;
+      const val=parseFloat(inp.value);
+      if(!isNaN(val)&&val>0) window._admFeeConfigs[id]=val;
+      else delete window._admFeeConfigs[id];
+    });
+  });
+}
+function getAdmFeeForClass(classNameOrId){
+  const cfgs=SCHOOL_SETTINGS.admission_fee_configs||{};
+  // Try by id first
+  if(cfgs[classNameOrId]) return parseFloat(cfgs[classNameOrId]);
+  // Try matching by name from cached classes
+  const def=parseFloat(SCHOOL_SETTINGS.admission_fee_default)||0;
+  return def;
+}
+async function getAdmFeeForClassByName(className){
+  if(!className) return parseFloat(SCHOOL_SETTINGS.admission_fee_default)||0;
+  const{data:cls}=await DB().from('classes').select('id').ilike('name',className.split(' ')[0]+'%').maybeSingle();
+  const cfgs=SCHOOL_SETTINGS.admission_fee_configs||{};
+  if(cls&&cfgs[cls.id]) return parseFloat(cfgs[cls.id]);
+  return parseFloat(SCHOOL_SETTINGS.admission_fee_default)||0;
+}
+
 // ═══════════════════════════════════════════
 // SIGNATURE SYSTEM — TABS & CLASS SIGNATURES
 // ═══════════════════════════════════════════
@@ -9001,7 +9126,7 @@ async function renderACExisting(type){
     const{data:staff}=await DB().from('profiles').select('*').eq('has_account',true).order('full_name');
     area.innerHTML=`<div class="card" style="overflow:hidden;">
       <div style="padding:14px 18px;border-bottom:1px solid var(--crd);font-weight:700;font-size:14px;color:var(--br);"><i class="fas fa-id-badge"></i> Existing Staff Accounts</div>
-      <div style="overflow-x:auto;"><table class="tbl">
+      <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;"><table class="tbl" style="min-width:max-content;">
         <thead><tr><th>Name</th><th>Email</th><th>Password</th><th>Roles</th><th>Actions</th></tr></thead>
         <tbody>${(staff||[]).map(s=>`<tr>
           <td style="font-weight:600;color:var(--br);">${s.full_name}</td>
@@ -9017,7 +9142,7 @@ async function renderACExisting(type){
     area.innerHTML=`<div class="card" style="overflow:hidden;">
       <div style="padding:14px 18px;border-bottom:1px solid var(--crd);font-weight:700;font-size:14px;color:var(--br);"><i class="fas fa-users"></i> Existing Student Accounts</div>
       <div style="padding:10px 18px;"><input class="input" placeholder="🔍 Search students…" style="max-width:240px;padding:8px 12px;" oninput="filterTbl(this,'ac-stu-ex-tb')"></div>
-      <div style="overflow-x:auto;"><table class="tbl">
+      <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;"><table class="tbl" style="min-width:max-content;">
         <thead><tr><th>Name</th><th>Adm No</th><th>Password</th><th>Gender</th><th>Class</th><th>Actions</th></tr></thead>
         <tbody id="ac-stu-ex-tb">${(students||[]).map(s=>`<tr>
           <td style="font-weight:600;color:var(--br);">${s.full_name}</td>
@@ -10246,7 +10371,7 @@ async function renderParentResults(){
         <div style="font-weight:700;color:var(--br);">${g.term} — ${g.session}</div>
         <button onclick="parentDownloadResultPDF('${child.id}','${g.term}','${g.session}')" class="btn btn-sm btn-primary"><i class="fas fa-download"></i> Download PDF</button>
       </div>
-      <div style="overflow-x:auto;"><table class="tbl">
+      <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;"><table class="tbl" style="min-width:max-content;">
         <thead><tr><th>Subject</th><th>CA</th><th>Exam</th><th>Total</th><th>Grade</th></tr></thead>
         <tbody>${g.results.map(r=>`<tr>
           <td style="font-weight:600;">${r.subject_name||'—'}</td>
@@ -10290,7 +10415,7 @@ async function renderParentAttendance(){
       <div style="font-size:12px;color:var(--brl);margin-top:5px;">${pct}% — ${pct>=80?'Excellent':pct>=60?'Fair':'Needs attention'}</div>
     </div>
     <div class="card" style="overflow:hidden;">
-      <div style="overflow-x:auto;"><table class="tbl">
+      <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;"><table class="tbl" style="min-width:max-content;">
         <thead><tr><th>Date</th><th>Morning</th><th>Afternoon</th><th>Term</th></tr></thead>
         <tbody>${recs.slice(0,50).map(r=>`<tr>
           <td>${fmtDate(r.date)}</td>
@@ -10317,7 +10442,7 @@ async function renderParentFees(){
     </div>
     <div class="card" style="overflow:hidden;">
       <div style="padding:14px 18px;border-bottom:1px solid var(--crd);font-weight:700;color:var(--br);">Payment History</div>
-      <div style="overflow-x:auto;"><table class="tbl">
+      <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;"><table class="tbl" style="min-width:max-content;">
         <thead><tr><th>Description</th><th>Amount</th><th>Status</th><th>Date</th><th>Receipt</th></tr></thead>
         <tbody>${(fees||[]).map(f=>`<tr>
           <td>${f.fee_type||f.description||'School Fees'}</td>
@@ -10407,7 +10532,7 @@ async function renderParentCBT(){
   const child=await getActiveChild();if(!child)return;
   const{data:subs}=await DB().from('cbt_submissions').select('*,cbt_exams(title,subject_name,exam_type)').eq('student_id',child.id).order('submitted_at',{ascending:false});
   if(!subs?.length){setContent('<div class="card" style="padding:32px;text-align:center;"><p style="color:var(--brl);">No test submissions yet.</p></div>');return;}
-  setContent(`<div class="card" style="overflow:hidden;"><div style="overflow-x:auto;"><table class="tbl">
+  setContent(`<div class="card" style="overflow:hidden;"><div style="overflow-x:auto;-webkit-overflow-scrolling:touch;"><table class="tbl" style="min-width:max-content;">
     <thead><tr><th>Exam</th><th>Subject</th><th>Score</th><th>Total</th><th>%</th><th>Date</th></tr></thead>
     <tbody>${subs.map(s=>`<tr>
       <td style="font-weight:600;">${s.cbt_exams?.title||'—'}</td>
@@ -10535,34 +10660,188 @@ const ALL_COUNTRIES=['Nigeria','Ghana','United Kingdom','United States','Canada'
 const NG_STATES=['Abia','Adamawa','Akwa Ibom','Anambra','Bauchi','Bayelsa','Benue','Borno','Cross River','Delta','Ebonyi','Edo','Ekiti','Enugu','FCT','Gombe','Imo','Jigawa','Kaduna','Kano','Katsina','Kebbi','Kogi','Kwara','Lagos','Nasarawa','Niger','Ogun','Ondo','Osun','Oyo','Plateau','Rivers','Sokoto','Taraba','Yobe','Zamfara'];
 
 async function renderAdmissions(){
-  setPage('Admissions','Manage admission applications',`<button onclick="showAdmissionPublic()" class="btn btn-sm btn-outline"><i class="fas fa-external-link-alt"></i> Public Form</button><button onclick="showInternalAdmForm()" class="btn btn-sm btn-primary" style="margin-left:6px;"><i class="fas fa-plus"></i> New Admission</button>`);
+  setPage('Admissions','Manage admission applications',`<button onclick="showAdmissionPublic()" class="btn btn-sm btn-outline"><i class="fas fa-external-link-alt"></i> Public Form</button><button onclick="showInternalAdmForm()" class="btn btn-sm btn-primary" style="margin-left:6px;"><i class="fas fa-plus"></i> New Admission</button><button onclick="showAdmFeeSettingsModal()" class="btn btn-sm btn-ghost" style="margin-left:6px;"><i class="fas fa-file-invoice-dollar"></i> Admission Fees</button>`);
   let apps=[];
   try{const{data}=await DB().from('admissions').select('*').order('created_at',{ascending:false});apps=data||[];}catch(e){}
-  setContent(`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:20px;">
-    ${sc('Total',apps.length,'fa-file-alt','#5D4037','#F5EDE3')}${sc('Paid',apps.filter(a=>a.payment_status==='paid').length,'fa-money-check','#16A34A','#DCFCE7')}${sc('Approved',apps.filter(a=>a.status==='approved').length,'fa-check-circle','#2563EB','#DBEAFE')}${sc('Pending',apps.filter(a=>a.status==='pending').length,'fa-clock','#D97706','#FEF3C7')}
+  const incomplete=apps.filter(a=>a.payment_status==='pending_confirmation'||(!a.payment_status&&a.amount_paid===0&&a.pub_payment_confirmed!==true));
+  setContent(`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:20px;">
+    ${sc('Total',apps.length,'fa-file-alt','#5D4037','#F5EDE3')}${sc('Paid',apps.filter(a=>a.payment_status==='paid').length,'fa-money-check','#16A34A','#DCFCE7')}${sc('Approved',apps.filter(a=>a.status==='approved').length,'fa-check-circle','#2563EB','#DBEAFE')}${sc('Pending',apps.filter(a=>a.status==='pending').length,'fa-clock','#D97706','#FEF3C7')}${sc('Incomplete',incomplete.length,'fa-exclamation-triangle','#EF4444','#FEE2E2')}
   </div>
   <div class="card" style="overflow:hidden;">
-    <div style="overflow-x:auto;"><table class="tbl"><thead><tr><th>Applicant</th><th>Class Applied</th><th>Date</th><th>Aptitude</th><th>Payment</th><th>Status</th><th>Actions</th></tr></thead>
-    <tbody>${apps.map(a=>`<tr>
-      <td style="font-weight:600;color:var(--br);">${a.full_name}</td>
+    <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;"><table class="tbl" style="min-width:860px;"><thead><tr><th>Applicant</th><th>Class Applied</th><th>Date</th><th>Aptitude</th><th>Adm Fee</th><th>Payment</th><th>Status</th><th>Actions</th></tr></thead>
+    <tbody>${apps.map(a=>{
+      const isIncomplete=a.payment_status==='pending_confirmation'||(a.payment_status!=='paid'&&a.payment_status!=='partial'&&!a.pub_payment_confirmed);
+      return`<tr style="${isIncomplete?'background:#FFF5F5;':a.payment_status==='paid'?'':''}">
+      <td style="font-weight:600;color:var(--br);">${a.full_name}${isIncomplete?'<span class="badge br-b" style="font-size:10px;margin-left:5px;">Incomplete</span>':''}</td>
       <td>${a.class_applied||'—'}</td>
       <td style="color:var(--brl);">${fmtDate(a.created_at)}</td>
       <td>${a.aptitude_score!=null?`<span class="badge ${a.aptitude_score>=65?'bg':'br-b'}">${a.aptitude_score}%</span>`:'—'}</td>
+      <td style="font-weight:700;color:var(--br);">₦${(a.admission_fee||0).toLocaleString()}</td>
       <td>${payBadge(a.payment_status||'unpaid')}</td>
       <td>${a.status==='approved'?'<span class="badge bg">Approved</span>':a.status==='rejected'?'<span class="badge br-b">Rejected</span>':'<span class="badge bo">Pending</span>'}</td>
-      <td style="display:flex;gap:4px;flex-wrap:wrap;">
-        <button onclick="viewAdmissionDetail('${a.id}')" class="btn btn-sm btn-outline" title="View"><i class="fas fa-eye"></i></button>
-        <button onclick="approveAdm('${a.id}')" class="btn btn-sm btn-success" title="Approve"><i class="fas fa-check"></i></button>
-        <button onclick="rejectAdm('${a.id}')" class="btn btn-sm btn-danger" title="Reject"><i class="fas fa-times"></i></button>
-        <button onclick="downloadAdmissionLetterPDF('${a.id}')" class="btn btn-sm" style="background:#DBEAFE;color:#2563EB;" title="PDF"><i class="fas fa-file-pdf"></i></button>
+      <td>
+        <div style="display:flex;gap:4px;flex-wrap:wrap;">
+          <button onclick="viewAdmissionDetail('${a.id}')" class="btn btn-sm btn-outline" title="View"><i class="fas fa-eye"></i></button>
+          ${isIncomplete?`<button onclick="confirmAdmPayment('${a.id}')" class="btn btn-sm" style="background:#FEF3C7;color:#D97706;border:1px solid #D97706;" title="Confirm Payment"><i class="fas fa-money-check-alt"></i> Confirm Payment</button>`:''}
+          <button onclick="approveAdm('${a.id}')" class="btn btn-sm btn-success" title="Approve"><i class="fas fa-check"></i></button>
+          <button onclick="rejectAdm('${a.id}')" class="btn btn-sm btn-danger" title="Reject"><i class="fas fa-times"></i></button>
+          <button onclick="downloadAdmissionLetterPDF('${a.id}')" class="btn btn-sm" style="background:#DBEAFE;color:#2563EB;" title="PDF"><i class="fas fa-file-pdf"></i></button>
+        </div>
       </td>
-    </tr>`).join('')||'<tr><td colspan="7" style="text-align:center;padding:28px;color:var(--brl);">No applications yet.</td></tr>'}
+    </tr>`;}).join('')||'<tr><td colspan="8" style="text-align:center;padding:28px;color:var(--brl);">No applications yet.</td></tr>'}
     </tbody></table></div></div>`);
 }
 
+async function showAdmFeeSettingsModal(){
+  const{data:classes}=await DB().from('classes').select('id,name,arm').order('name');
+  const cfgs=SCHOOL_SETTINGS.admission_fee_configs||{};
+  window._admFeeConfigs={...cfgs};
+  modal(`<div style="padding:26px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+      <h3 class="hf" style="font-size:20px;color:var(--br);"><i class="fas fa-file-invoice-dollar"></i> Admission Fee Settings</h3>
+      <button onclick="closeModal()" style="border:none;background:none;font-size:22px;cursor:pointer;">&times;</button>
+    </div>
+    <div style="margin-bottom:14px;">
+      <label class="lbl">Default Admission Fee (₦) — for all classes</label>
+      <input id="modal-adm-fee-default" class="input" type="number" min="0" value="${SCHOOL_SETTINGS.admission_fee_default||0}" placeholder="e.g. 5000">
+    </div>
+    <div style="font-weight:600;font-size:13px;color:var(--br);margin-bottom:9px;">Per-Class Override</div>
+    <div style="max-height:260px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;border:1.5px solid var(--crd);border-radius:11px;padding:10px;">
+      ${(classes||[]).map(c=>{const n=c.name+(c.arm?' '+c.arm:'');const v=cfgs[c.id]||'';return`<div style="display:flex;align-items:center;gap:10px;">
+        <span style="flex:1;font-size:13px;font-weight:600;color:var(--br);">${n}</span>
+        <input class="input adm-fee-modal-inp" data-id="${c.id}" type="number" min="0" placeholder="Use default" value="${v}" style="width:130px;padding:7px 11px;" oninput="window._admFeeConfigs[this.dataset.id]=parseFloat(this.value)||0;">
+      </div>`;}).join('')}
+    </div>
+    <div style="display:flex;gap:9px;margin-top:18px;">
+      <button onclick="saveAdmFeeSettings()" class="btn btn-primary" style="flex:1;justify-content:center;padding:12px;"><i class="fas fa-save"></i> Save Admission Fees</button>
+      <button onclick="closeModal()" class="btn btn-outline" style="padding:12px 18px;">Cancel</button>
+    </div>
+  </div>`,'520px');
+}
+
+async function saveAdmFeeSettings(){
+  const def=parseFloat(document.getElementById('modal-adm-fee-default')?.value)||0;
+  const cfgs={};
+  document.querySelectorAll('.adm-fee-modal-inp').forEach(inp=>{
+    const v=parseFloat(inp.value);
+    if(v>0) cfgs[inp.dataset.id]=v;
+  });
+  SCHOOL_SETTINGS.admission_fee_default=def;
+  SCHOOL_SETTINGS.admission_fee_configs=cfgs;
+  const{error}=await DB().from('school_settings').update({admission_fee_default:def,admission_fee_configs:cfgs,updated_at:new Date().toISOString()}).eq('id',1);
+  if(error){toast('Error saving: '+error.message,'error');return;}
+  toast('✅ Admission fees saved!');
+  closeModal();
+}
+
+async function confirmAdmPayment(admId){
+  const{data:a}=await DB().from('admissions').select('*').eq('id',admId).single();
+  if(!a){toast('Not found.','error');return;}
+  modal(`<div style="padding:26px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+      <h3 class="hf" style="font-size:20px;color:var(--br);"><i class="fas fa-money-check-alt"></i> Confirm Payment</h3>
+      <button onclick="closeModal()" style="border:none;background:none;font-size:22px;cursor:pointer;">&times;</button>
+    </div>
+    <div style="background:var(--cr);border-radius:11px;padding:13px 16px;margin-bottom:16px;font-size:13px;">
+      <div style="font-weight:700;color:var(--br);">${a.full_name}</div>
+      <div style="color:var(--brl);">Class: ${a.class_applied||'—'} · Admission Fee: <strong>₦${(a.admission_fee||0).toLocaleString()}</strong></div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:13px;">
+      <div><label class="lbl">Amount Collected (₦)</label>
+        <input id="pay-conf-amount" class="input" type="number" min="0" placeholder="Amount received" value="${a.admission_fee||0}" oninput="document.getElementById('pay-conf-bal').textContent='Balance: ₦'+Math.max(0,(${a.admission_fee||0})-parseFloat(this.value||0)).toLocaleString()">
+        <div id="pay-conf-bal" style="font-size:12.5px;color:#D97706;font-weight:600;margin-top:4px;"></div>
+      </div>
+      <div><label class="lbl">Payment Method</label>
+        <select id="pay-conf-method" class="input">
+          <option value="">Select</option>
+          <option value="cash">Cash</option>
+          <option value="transfer">Bank Transfer</option>
+          <option value="paystack">Paystack/Online</option>
+        </select>
+      </div>
+    </div>
+    <div style="display:flex;gap:9px;margin-top:18px;">
+      <button onclick="saveAdmPaymentConfirmation('${admId}')" class="btn btn-primary" style="flex:1;justify-content:center;padding:12px;"><i class="fas fa-check-circle"></i> Confirm & Unlock</button>
+      <button onclick="closeModal()" class="btn btn-outline" style="padding:12px 18px;">Cancel</button>
+    </div>
+  </div>`,'480px');
+}
+
+async function saveAdmPaymentConfirmation(admId){
+  const amt=parseFloat(document.getElementById('pay-conf-amount')?.value)||0;
+  const method=document.getElementById('pay-conf-method')?.value||'';
+  if(!method){toast('Select payment method.','error');return;}
+  const{data:a}=await DB().from('admissions').select('admission_fee').eq('id',admId).single();
+  const fee=parseFloat(a?.admission_fee)||0;
+  const pStatus=amt>=fee&&fee>0?'paid':amt>0?'partial':'unpaid';
+  const{error}=await DB().from('admissions').update({
+    amount_paid:amt,payment_method:method,payment_status:pStatus,
+    confirmed_by:UP?.full_name||'Admin',confirmed_at:new Date().toISOString(),
+    status:'pending'
+  }).eq('id',admId);
+  if(error){toast('Error: '+error.message,'error');return;}
+  toast('✅ Payment confirmed! Admission form unlocked.');
+  closeModal();
+  // Auto-generate PDF for public admission
+  const{data:updAdm}=await DB().from('admissions').select('*').eq('id',admId).single();
+  if(updAdm) await generateAdmissionPDF(updAdm,true,true);
+  renderAdmissions();
+}
+
 async function approveAdm(id){
+  const{data:a}=await DB().from('admissions').select('*').eq('id',id).single();
+  if(!a){toast('Not found','error');return;}
+  // Payment must be confirmed before approval
+  if(a.payment_status==='pending_confirmation'||(!a.amount_paid&&a.admission_fee>0&&a.payment_method!=='paystack')){
+    toast('Payment must be confirmed before approving admission.','error');return;
+  }
   await DB().from('admissions').update({status:'approved'}).eq('id',id);
-  toast('✅ Approved!');renderAdmissions();
+  // Auto-add admitted student to class roster
+  try{
+    const clsName=(a.class_admitted||a.class_applied||'').trim();
+    const admNum=a.admission_number||('ADM/'+new Date().getFullYear()+'/'+Date.now().toString().slice(-5));
+    const{data:cls}=await DB().from('classes').select('id,name,arm').ilike('name',clsName.split(' ')[0]+'%').maybeSingle();
+    const{data:existing}=await DB().from('students').select('id').eq('full_name',a.full_name).maybeSingle();
+    if(!existing){
+      await DB().from('students').insert({
+        full_name:a.full_name,
+        surname:(a.full_name||'').split(' ')[0]||a.full_name,
+        first_name:(a.full_name||'').split(' ').slice(1).join(' ')||null,
+        gender:a.gender||null,
+        date_of_birth:a.date_of_birth||null,
+        address:a.permanent_address||a.residential_address||null,
+        parent_name:a.parent_name||null,
+        parent_phone:a.phone||null,
+        email:a.email||null,
+        class_id:cls?.id||null,
+        class_name:clsName,
+        admission_number:admNum,
+        student_type:'new',
+        has_account:false,blocked:false,cleared:false,
+        scholarship:false,
+        class_join_year:new Date().getFullYear()
+      });
+      toast('✅ Approved! Student added to '+clsName+' class.');
+    } else {
+      toast('✅ Approved! (Student already in roster)');
+    }
+  } catch(e){toast('✅ Approved! (Could not auto-add to class: '+e.message+')');}
+  // Sync payment to fee receipts
+  if(a.amount_paid>0){
+    try{await DB().from('fee_receipts').insert({
+      student_name:a.full_name,
+      admission_number:a.admission_number||'',
+      class_name:a.class_admitted||a.class_applied||'',
+      amount:a.amount_paid,
+      payment_method:a.payment_method||'',
+      payment_type:'admission_fee',
+      session:SCHOOL_SETTINGS.current_session||'',
+      term:SCHOOL_SETTINGS.current_term||'',
+      confirmed_by:a.confirmed_by||UP?.full_name||'',
+      created_at:new Date().toISOString()
+    });}catch(e){}
+  }
+  renderAdmissions();
 }
 async function rejectAdm(id){
   await DB().from('admissions').update({status:'rejected'}).eq('id',id);
@@ -10613,9 +10892,10 @@ function showAdmissionPublic(){
 
 function buildAdmFormHTML(classes,ss,isPublic){
   const schoolName=ss.school_name||'Victorious International Schools';
-  const classOpts=classes.map(c=>`<option value="${c.name}${c.arm?' '+c.arm:''}">${c.name}${c.arm?' '+c.arm:''}</option>`).join('');
-  const countryOpts=ALL_COUNTRIES.map(c=>`<option value="${c}">${c}</option>`).join('');
-  const stateOpts=NG_STATES.map(s=>`<option value="${s}">${s}</option>`).join('');
+  const classOpts=classes.map(c=>`<option value="${c.name}${c.arm?' '+c.arm:''}" data-id="${c.id}">${c.name}${c.arm?' '+c.arm:''}</option>`).join('');
+  const countryOpts=(window.ALL_COUNTRIES||['Nigeria']).map(c=>`<option value="${c}">${c}</option>`).join('');
+  const stateOpts=(window.NG_STATES||[]).map(s=>`<option value="${s}">${s}</option>`).join('');
+  const defFee=parseFloat(ss.admission_fee_default)||0;
   return`<div style="padding:24px;max-width:720px;">
     <div style="text-align:center;margin-bottom:22px;border-bottom:2px solid var(--crd);padding-bottom:16px;">
       <div style="width:54px;height:54px;background:var(--br);border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:22px;margin:0 auto 10px;overflow:hidden;">${ss.logo_url?`<img src="${ss.logo_url}" style="width:100%;height:100%;object-fit:contain;">`:'🏫'}</div>
@@ -10623,64 +10903,43 @@ function buildAdmFormHTML(classes,ss,isPublic){
       <p style="font-size:12px;color:var(--brl);">${ss.motto||'Wisdom, Knowledge and Success'}</p>
       <div style="font-size:14px;font-weight:700;color:var(--br);margin-top:8px;">${isPublic?'PUBLIC':'INTERNAL'} ADMISSION FORM</div>
     </div>
-    <!-- Step indicator -->
     <div id="adm-steps" style="display:flex;gap:4px;margin-bottom:20px;justify-content:center;">
       ${['Basic','Biodata','Religion','Address','Parents','Health','Academic','Payment'].map((s,i)=>`<div id="adm-step-${i}" style="flex:1;height:4px;border-radius:3px;background:${i===0?'var(--br)':'var(--crd)'};" title="${s}"></div>`).join('')}
     </div>
     <div id="adm-form-body">
       <!-- SECTION 0: BASIC -->
       <div id="adm-sec-0">
-  <div style="font-weight:700;font-size:14px;color:var(--br);margin-bottom:14px;padding:10px;background:var(--cr);border-radius:9px;">
-    <i class="fas fa-user"></i> Basic Details
-  </div>
-
-  <div style="display:flex;flex-direction:column;gap:12px;">
-    
-    <div class="g2">
-      <div>
-        <label class="lbl">Full Name *</label>
-        <input id="adm-name" class="input" placeholder="Surname Firstname Othername">
-      </div>
-
-      <div>
-        <label class="lbl">Class Applying For *</label>
-        <select id="adm-cls" class="input">
-          <option value="">Select Class</option>
-          ${classOpts}
-        </select>
-      </div>
-    </div>
-
-    ${!isPublic?`
-      <div class="g2">
-        <div>
-          <label class="lbl">CBT / Aptitude Code</label>
-          <input id="adm-aptcode" class="input" placeholder="Code (if test taken)" oninput="lookupAptCode(this.value)">
+        <div style="font-weight:700;font-size:14px;color:var(--br);margin-bottom:14px;padding:10px;background:var(--cr);border-radius:9px;"><i class="fas fa-user"></i> Basic Details</div>
+        <div style="display:flex;flex-direction:column;gap:12px;">
+          <div class="g2">
+            <div><label class="lbl">Full Name *</label><input id="adm-name" class="input" placeholder="Surname Firstname Othername"></div>
+            <div><label class="lbl">Class Applying For *</label>
+              <select id="adm-cls" class="input" onchange="onAdmClassChange(this,${isPublic})">
+                <option value="">Select Class</option>${classOpts}
+              </select>
+            </div>
+          </div>
+          <!-- Admission Fee Display -->
+          <div id="adm-fee-banner" style="display:none;background:linear-gradient(135deg,var(--br),#8D6E63);color:#fff;border-radius:13px;padding:14px 18px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <div><div style="font-size:11px;font-weight:600;opacity:.85;text-transform:uppercase;letter-spacing:.06em;">Admission Fee</div>
+                <div style="font-size:22px;font-weight:800;" id="adm-fee-display">₦0</div>
+              </div>
+              <i class="fas fa-file-invoice-dollar" style="font-size:28px;opacity:.45;"></i>
+            </div>
+          </div>
+          ${!isPublic?`
+          <div class="g2">
+            <div><label class="lbl">CBT / Aptitude Code</label><input id="adm-aptcode" class="input" placeholder="Code (if test taken)" oninput="lookupAptCode(this.value)"></div>
+            <div><label class="lbl">Aptitude Score</label><input id="adm-apt-score" class="input" type="number" min="0" max="100" placeholder="Auto-filled or manual"></div>
+          </div>
+          <div id="apt-code-status" style="display:none;font-size:12px;font-weight:600;padding:6px 10px;border-radius:8px;"></div>`
+          :`<input type="hidden" id="adm-aptcode" value=""><input type="hidden" id="adm-apt-score" value="">`}
         </div>
-
-        <div>
-          <label class="lbl">Aptitude Score</label>
-          <input id="adm-apt-score" class="input" type="number" min="0" max="100" placeholder="Auto-filled or manual">
+        <div style="margin-top:18px;display:flex;justify-content:flex-end;">
+          <button onclick="admNext(0)" class="btn btn-primary">Next <i class="fas fa-arrow-right"></i></button>
         </div>
       </div>
-
-      <div id="apt-code-status" style="display:none;font-size:12px;font-weight:600;padding:6px 10px;border-radius:8px;"></div>
-    `
-    :
-    `
-      <input type="hidden" id="adm-aptcode" value="">
-      <input type="hidden" id="adm-apt-score" value="">
-    `
-    }
-
-  </div>
-
-  <div style="margin-top:18px;display:flex;justify-content:flex-end;">
-    <button onclick="admNext(0)" class="btn btn-primary">
-      Next <i class="fas fa-arrow-right"></i>
-    </button>
-  </div>
-</div>
       <!-- SECTION 1: BIODATA -->
       <div id="adm-sec-1" style="display:none;">
         <div style="font-weight:700;font-size:14px;color:var(--br);margin-bottom:14px;padding:10px;background:var(--cr);border-radius:9px;"><i class="fas fa-id-card"></i> Biodata</div>
@@ -10706,10 +10965,9 @@ function buildAdmFormHTML(classes,ss,isPublic){
         <div style="font-weight:700;font-size:14px;color:var(--br);margin-bottom:14px;padding:10px;background:var(--cr);border-radius:9px;"><i class="fas fa-pray"></i> Religion</div>
         <div style="display:flex;flex-direction:column;gap:12px;">
           <div class="g2">
-            <div><label class="lbl">Religion</label><select id="adm-religion" class="input"><option value="">Select or type</option><option>Christianity</option><option>Islam</option><option>Traditional</option><option>Other</option></select></div>
+            <div><label class="lbl">Religion</label><select id="adm-religion" class="input"><option value="">Select</option><option>Christianity</option><option>Islam</option><option>Traditional</option><option>Other</option></select></div>
             <div><label class="lbl">Denomination / Sect</label><input id="adm-denom" class="input" placeholder="e.g. Catholic, Baptist, Sunni"></div>
           </div>
-          <!-- Residential address -->
           <div style="margin-top:6px;">
             <label style="display:flex;align-items:center;gap:9px;font-size:13.5px;cursor:pointer;">
               <input type="checkbox" id="adm-same-addr" onchange="toggleSameAddr(this.checked)" style="accent-color:var(--br);width:16px;height:16px;">
@@ -10731,7 +10989,7 @@ function buildAdmFormHTML(classes,ss,isPublic){
             <select id="adm-prev-school" class="input" onchange="togglePrevSchool(this.value)">
               <option value="">Select</option><option value="nil">Nil (No previous school)</option><option value="other">Other School</option>
             </select></div>
-          <div id="adm-prev-school-details" style="display:none;display:flex;flex-direction:column;gap:12px;">
+          <div id="adm-prev-school-details" style="display:none;flex-direction:column;gap:12px;">
             <div class="g2">
               <div><label class="lbl">Previous Class</label><input id="adm-prev-cls" class="input" placeholder="e.g. Primary 5"></div>
               <div><label class="lbl">Last Promoted Class</label><input id="adm-last-promo" class="input" placeholder="e.g. Primary 6"></div>
@@ -10762,63 +11020,228 @@ function buildAdmFormHTML(classes,ss,isPublic){
             <div><label class="lbl">Who Takes Responsibility?</label><select id="adm-resp" class="input"><option>Parent</option><option>Guardian</option><option>Relative</option></select></div>
             <div><label class="lbl">Child Lives With?</label><select id="adm-lives" class="input"><option>Family</option><option>Mother</option><option>Father</option><option>Relative</option><option>Guardian</option></select></div>
           </div>
-          <!-- Emergency -->
-          <div style="font-weight:700;font-size:13px;color:var(--br);margin-top:6px;">Emergency Contact</div>
+          <div style="font-weight:700;font-size:13px;color:var(--br);margin-top:4px;">Emergency Contact</div>
           <div class="g2">
-            <div><label class="lbl">Name</label><input id="adm-emer-name" class="input" placeholder="Emergency contact name"></div>
-            <div><label class="lbl">Relationship</label><input id="adm-emer-rel" class="input" placeholder="e.g. Uncle, Aunt"></div>
+            <div><label class="lbl">Emergency Contact Name</label><input id="adm-emer-name" class="input" placeholder="Full name"></div>
+            <div><label class="lbl">Relationship</label><input id="adm-emer-rel" class="input" placeholder="e.g. Uncle"></div>
           </div>
           <div class="g2">
-            <div><label class="lbl">Phone</label><input id="adm-emer-phone" class="input" type="tel" placeholder="Emergency phone"></div>
-            <div><label class="lbl">Address</label><input id="adm-emer-addr" class="input" placeholder="Emergency address"></div>
+            <div><label class="lbl">Emergency Phone</label><input id="adm-emer-phone" class="input" type="tel" placeholder="08xxxxxxxxxx"></div>
+            <div><label class="lbl">Emergency Address</label><input id="adm-emer-addr" class="input" placeholder="Address"></div>
           </div>
         </div>
         <div style="margin-top:18px;display:flex;justify-content:space-between;"><button onclick="admPrev(4)" class="btn btn-outline"><i class="fas fa-arrow-left"></i> Back</button><button onclick="admNext(4)" class="btn btn-primary">Next <i class="fas fa-arrow-right"></i></button></div>
       </div>
-      <!-- SECTION 5: HEALTH -->
+      <!-- SECTION 5: HEALTH & CONSENT -->
       <div id="adm-sec-5" style="display:none;">
         <div style="font-weight:700;font-size:14px;color:var(--br);margin-bottom:14px;padding:10px;background:var(--cr);border-radius:9px;"><i class="fas fa-heartbeat"></i> Health & Consent</div>
         <div style="display:flex;flex-direction:column;gap:12px;">
-          <div><label class="lbl">Any known health issues?</label><select id="adm-health" class="input" onchange="toggleHealthDesc(this.value)"><option value="no">No</option><option value="yes">Yes</option></select></div>
+          <div><label class="lbl">Any health issues?</label><select id="adm-health" class="input" onchange="toggleHealthDesc(this.value)"><option value="no">No</option><option value="yes">Yes</option></select></div>
           <div id="adm-health-desc-wrap" style="display:none;"><label class="lbl">Describe health issue</label><textarea id="adm-health-desc" class="input" rows="2" placeholder="Describe..."></textarea></div>
           <div><label class="lbl">Any disability?</label><select id="adm-disability" class="input" onchange="toggleDisabilityDesc(this.value)"><option value="no">No</option><option value="yes">Yes</option></select></div>
           <div id="adm-disability-desc-wrap" style="display:none;"><label class="lbl">Specify disability</label><input id="adm-disability-desc" class="input" placeholder="Specify..."></div>
+          <!-- Consent with admission fee shown -->
+          <div id="adm-consent-fee-note" style="background:var(--cr);border-radius:11px;padding:13px 16px;border-left:4px solid var(--br);display:none;">
+            <div style="font-weight:700;font-size:13px;color:var(--br);margin-bottom:5px;"><i class="fas fa-file-invoice-dollar"></i> Admission Fee Summary</div>
+            <div style="font-size:13px;color:#2C1810;">Total Admission Fee: <strong id="adm-consent-fee-val" style="color:var(--br);font-size:16px;">₦0</strong></div>
+            <div style="font-size:11.5px;color:var(--brl);margin-top:3px;">Payment is required to complete admission.</div>
+          </div>
           <div style="background:var(--cr);border-radius:10px;padding:14px;">
             <div style="font-weight:700;color:var(--br);margin-bottom:10px;">Consent</div>
-            <label style="display:flex;align-items:center;gap:9px;font-size:13.5px;cursor:pointer;margin-bottom:8px;">
-              <input type="checkbox" id="adm-consent-disc" style="accent-color:var(--br);width:16px;height:16px;"> I accept the school's discipline rules and code of conduct
+            <label style="display:flex;align-items:flex-start;gap:9px;font-size:13.5px;cursor:pointer;margin-bottom:8px;">
+              <input type="checkbox" id="adm-consent-disc" style="accent-color:var(--br);width:16px;height:16px;flex-shrink:0;margin-top:2px;"> I accept the school's discipline rules and code of conduct and understand that disciplinary measures may be applied as per school policy
             </label>
-            <label style="display:flex;align-items:center;gap:9px;font-size:13.5px;cursor:pointer;">
-              <input type="checkbox" id="adm-consent-med" style="accent-color:var(--br);width:16px;height:16px;"> I approve emergency medical treatment if required
+            <label style="display:flex;align-items:flex-start;gap:9px;font-size:13.5px;cursor:pointer;">
+              <input type="checkbox" id="adm-consent-med" style="accent-color:var(--br);width:16px;height:16px;flex-shrink:0;margin-top:2px;"> I approve emergency medical treatment if required, including hospitalisation, and consent to the school taking my ward to hospital in an emergency
             </label>
           </div>
         </div>
         <div style="margin-top:18px;display:flex;justify-content:space-between;"><button onclick="admPrev(5)" class="btn btn-outline"><i class="fas fa-arrow-left"></i> Back</button><button onclick="admNext(5)" class="btn btn-primary">Next <i class="fas fa-arrow-right"></i></button></div>
       </div>
-      <!-- SECTION 6: ACADEMIC / PAYMENT -->
+      <!-- SECTION 6: ACADEMIC -->
       <div id="adm-sec-6" style="display:none;">
-        <div style="font-weight:700;font-size:14px;color:var(--br);margin-bottom:14px;padding:10px;background:var(--cr);border-radius:9px;"><i class="fas fa-graduation-cap"></i> Academic & Payment</div>
+        <div style="font-weight:700;font-size:14px;color:var(--br);margin-bottom:14px;padding:10px;background:var(--cr);border-radius:9px;"><i class="fas fa-graduation-cap"></i> Academic Details</div>
         <div style="display:flex;flex-direction:column;gap:12px;">
-          <div class="g2">
-            <div><label class="lbl">Class Admitted Into</label><select id="adm-admitted-cls" class="input"><option value="">Same as applied</option>${classes.map(c=>`<option value="${c.name}${c.arm?' '+c.arm:''}">${c.name}${c.arm?' '+c.arm:''}</option>`).join('')}</select></div>
-          </div>
-          <div class="g2">
-            <div><label class="lbl">Amount Paid (₦)</label><input id="adm-amount" class="input" type="number" min="0" placeholder="0" value="0"></div>
-            <div><label class="lbl">Payment Method</label><select id="adm-pay-method" class="input"><option value="">Select</option><option>Cash</option><option>Transfer</option><option>Online</option><option>Cheque</option></select></div>
-          </div>
-          <div><label class="lbl">Balance Payment Due Date</label><input id="adm-bal-date" class="input" type="date"></div>
-          <div class="g2">
-            <div><label class="lbl">Official Name (Admin)</label><input id="adm-official" class="input" value="${UP?.full_name||''}" readonly style="background:var(--cr);"></div>
-            <div><label class="lbl">Date</label><input id="adm-official-date" class="input" type="date" value="${new Date().toISOString().slice(0,10)}" readonly style="background:var(--cr);"></div>
-          </div>
+          <div><label class="lbl">Class Admitted Into</label><select id="adm-admitted-cls" class="input"><option value="">Same as applied</option>${classes.map(c=>`<option value="${c.name}${c.arm?' '+c.arm:''}">${c.name}${c.arm?' '+c.arm:''}</option>`).join('')}</select></div>
+          ${!isPublic?`
+          <div><label class="lbl">Official Name (Admin)</label><input id="adm-official" class="input" value="${UP?.full_name||''}" readonly style="background:var(--cr);"></div>
+          <div><label class="lbl">Date</label><input id="adm-official-date" class="input" type="date" value="${new Date().toISOString().slice(0,10)}" readonly style="background:var(--cr);"></div>`:''}
         </div>
         <div style="margin-top:18px;display:flex;justify-content:space-between;">
           <button onclick="admPrev(6)" class="btn btn-outline"><i class="fas fa-arrow-left"></i> Back</button>
-          <button onclick="submitInternalAdm()" class="btn btn-primary" style="background:#16A34A;"><i class="fas fa-check-circle"></i> Submit Admission</button>
+          <button onclick="admNext(6)" class="btn btn-primary">Next <i class="fas fa-arrow-right"></i></button>
         </div>
+      </div>
+      <!-- SECTION 7: PAYMENT -->
+      <div id="adm-sec-7" style="display:none;">
+        <div style="font-weight:700;font-size:14px;color:var(--br);margin-bottom:14px;padding:10px;background:var(--cr);border-radius:9px;"><i class="fas fa-money-bill-wave"></i> Payment</div>
+        ${!isPublic?`
+        <!-- INTERNAL PAYMENT SECTION -->
+        <div style="background:linear-gradient(135deg,var(--br),#8D6E63);border-radius:14px;padding:18px;color:#fff;margin-bottom:16px;">
+          <div style="font-size:11px;opacity:.8;font-weight:600;text-transform:uppercase;letter-spacing:.07em;">Total Admission Fee</div>
+          <div style="font-size:26px;font-weight:800;margin-top:2px;" id="adm-pay-total-int">₦0</div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:12px;">
+          <div class="g2">
+            <div>
+              <label class="lbl">Amount Paid (₦)</label>
+              <input id="adm-amount" class="input" type="number" min="0" placeholder="0" value="0" oninput="calcAdmBalance()">
+            </div>
+            <div>
+              <label class="lbl">Payment Method</label>
+              <select id="adm-pay-method" class="input">
+                <option value="">Select</option><option>Cash</option><option>Transfer</option><option>Online</option><option>Cheque</option>
+              </select>
+            </div>
+          </div>
+          <div id="adm-balance-box" style="display:none;background:#FEF3C7;border-radius:11px;padding:13px 16px;border-left:4px solid #D97706;">
+            <div style="font-size:12px;font-weight:600;color:#92400E;">Balance Remaining</div>
+            <div style="font-size:22px;font-weight:800;color:#D97706;" id="adm-balance-val">₦0</div>
+          </div>
+          <div><label class="lbl">Balance Payment Due Date (optional)</label><input id="adm-bal-date" class="input" type="date"></div>
+        </div>
+        <div style="margin-top:18px;display:flex;justify-content:space-between;">
+          <button onclick="admPrev(7)" class="btn btn-outline"><i class="fas fa-arrow-left"></i> Back</button>
+          <button onclick="submitInternalAdm()" class="btn btn-primary" style="background:#16A34A;"><i class="fas fa-check-circle"></i> Submit & Generate PDF</button>
+        </div>`:`
+        <!-- PUBLIC PAYMENT SECTION -->
+        <div style="background:linear-gradient(135deg,var(--br),#8D6E63);border-radius:14px;padding:18px;color:#fff;margin-bottom:16px;">
+          <div style="font-size:11px;opacity:.8;font-weight:600;text-transform:uppercase;letter-spacing:.07em;">Admission Fee to Pay</div>
+          <div style="font-size:26px;font-weight:800;margin-top:2px;" id="adm-pay-total-pub">₦0</div>
+          <div style="font-size:11.5px;opacity:.75;margin-top:3px;">Payment is mandatory to complete your admission</div>
+        </div>
+        <div style="font-weight:600;font-size:13.5px;color:var(--br);margin-bottom:12px;">Select Payment Method</div>
+        <div style="display:flex;flex-direction:column;gap:10px;">
+          <label onclick="showPubPayMethod('paystack')" style="display:flex;align-items:center;gap:12px;padding:14px 16px;border:2px solid var(--crd);border-radius:12px;cursor:pointer;transition:.18s;" id="pub-pay-opt-paystack">
+            <input type="radio" name="pub-pay-method" value="paystack" style="accent-color:var(--br);">
+            <div style="width:32px;height:32px;background:#00C3F7;border-radius:8px;display:flex;align-items:center;justify-content:center;"><i class="fas fa-credit-card" style="color:#fff;font-size:14px;"></i></div>
+            <div><div style="font-weight:700;font-size:13.5px;">Pay Online (Paystack)</div><div style="font-size:11.5px;color:var(--brl);">Card, USSD, Bank Transfer via Paystack</div></div>
+          </label>
+          <label onclick="showPubPayMethod('transfer')" style="display:flex;align-items:center;gap:12px;padding:14px 16px;border:2px solid var(--crd);border-radius:12px;cursor:pointer;transition:.18s;" id="pub-pay-opt-transfer">
+            <input type="radio" name="pub-pay-method" value="transfer" style="accent-color:var(--br);">
+            <div style="width:32px;height:32px;background:#DCFCE7;border-radius:8px;display:flex;align-items:center;justify-content:center;"><i class="fas fa-university" style="color:#16A34A;font-size:14px;"></i></div>
+            <div><div style="font-weight:700;font-size:13.5px;">Bank Transfer</div><div style="font-size:11.5px;color:var(--brl);">Transfer directly to school bank account</div></div>
+          </label>
+          <label onclick="showPubPayMethod('cash')" style="display:flex;align-items:center;gap:12px;padding:14px 16px;border:2px solid var(--crd);border-radius:12px;cursor:pointer;transition:.18s;" id="pub-pay-opt-cash">
+            <input type="radio" name="pub-pay-method" value="cash" style="accent-color:var(--br);">
+            <div style="width:32px;height:32px;background:#FEF3C7;border-radius:8px;display:flex;align-items:center;justify-content:center;"><i class="fas fa-money-bill" style="color:#D97706;font-size:14px;"></i></div>
+            <div><div style="font-weight:700;font-size:13.5px;">Cash Payment</div><div style="font-size:11.5px;color:var(--brl);">Pay cash at the school office</div></div>
+          </label>
+        </div>
+        <!-- Payment detail panels -->
+        <div id="pub-pay-panel-paystack" style="display:none;margin-top:14px;background:#EFF8FF;border-radius:12px;padding:14px 16px;">
+          <div style="font-weight:700;font-size:13px;color:#2563EB;margin-bottom:10px;"><i class="fas fa-credit-card"></i> Pay via Paystack</div>
+          <button onclick="initiatePaystack()" class="btn" style="background:#00C3F7;color:#fff;width:100%;justify-content:center;padding:13px;font-size:14px;font-weight:700;border-radius:12px;"><i class="fas fa-lock"></i> Pay Securely with Paystack</button>
+          <div style="font-size:11px;color:var(--brl);text-align:center;margin-top:8px;"><i class="fas fa-shield-alt"></i> Secured by Paystack. All cards accepted.</div>
+          <div id="paystack-paid-confirm" style="display:none;background:#DCFCE7;border-radius:10px;padding:10px 14px;margin-top:10px;font-size:13px;font-weight:700;color:#16A34A;"><i class="fas fa-check-circle"></i> Payment confirmed! You can now submit.</div>
+        </div>
+        <div id="pub-pay-panel-transfer" style="display:none;margin-top:14px;background:#F0FFF4;border-radius:12px;padding:14px 16px;">
+          <div style="font-weight:700;font-size:13px;color:#16A34A;margin-bottom:10px;"><i class="fas fa-university"></i> Bank Transfer Details</div>
+          <div style="background:#fff;border-radius:10px;padding:12px;font-size:13px;display:flex;flex-direction:column;gap:6px;">
+            <div><span style="color:var(--brl);font-weight:600;">Bank:</span> <strong>${ss.bank_name||'(Not configured — contact school)'}</strong></div>
+            <div><span style="color:var(--brl);font-weight:600;">Account Name:</span> <strong>${ss.bank_account_name||'(Not configured)'}</strong></div>
+            <div><span style="color:var(--brl);font-weight:600;">Account Number:</span> <strong style="font-size:16px;letter-spacing:.08em;">${ss.bank_account_number||'—'}</strong></div>
+          </div>
+          <div style="background:#FEF3C7;border-radius:10px;padding:10px 14px;margin-top:10px;font-size:12.5px;color:#92400E;">
+            <i class="fas fa-phone"></i> For enquiries call: <strong>${ss.payment_phone||ss.phone1||'(Contact school)'}</strong>
+          </div>
+          <div style="margin-top:10px;font-size:12px;color:var(--brl);">After transfer, submit this form. Our team will confirm your payment and unlock your admission form.</div>
+        </div>
+        <div id="pub-pay-panel-cash" style="display:none;margin-top:14px;background:#FFFBEB;border-radius:12px;padding:14px 16px;">
+          <div style="font-weight:700;font-size:13px;color:#D97706;margin-bottom:10px;"><i class="fas fa-money-bill"></i> Cash Payment</div>
+          <div style="font-size:13px;color:#2C1810;margin-bottom:8px;">Please visit the school office to make your cash payment before your admission can be processed.</div>
+          <div style="background:#fff;border-radius:10px;padding:12px;font-size:13px;">
+            <div style="font-weight:700;color:var(--br);margin-bottom:4px;"><i class="fas fa-phone"></i> Call to arrange payment:</div>
+            <div style="font-size:17px;font-weight:800;color:var(--br);">${ss.payment_phone||ss.phone1||'Contact school'}</div>
+          </div>
+          <div style="margin-top:10px;font-size:12px;color:var(--brl);">Submit this form and our team will contact you for payment confirmation.</div>
+        </div>
+        <div id="pub-pay-confirmed-flag" style="display:none;background:#DCFCE7;border-radius:11px;padding:12px 16px;margin-top:12px;font-size:13px;font-weight:700;color:#16A34A;"><i class="fas fa-check-circle"></i> Payment method selected. You can proceed to submit.</div>
+        <div style="margin-top:18px;display:flex;justify-content:space-between;">
+          <button onclick="admPrev(7)" class="btn btn-outline"><i class="fas fa-arrow-left"></i> Back</button>
+          <button onclick="submitPublicAdm()" id="pub-submit-btn" class="btn btn-primary" style="background:#16A34A;"><i class="fas fa-paper-plane"></i> Submit Application</button>
+        </div>`}
       </div>
     </div>
   </div>`;
+}
+
+function onAdmClassChange(sel,isPublic){
+  const opt=sel.options[sel.selectedIndex];
+  const cid=opt?.dataset?.id||'';
+  const cfgs=SCHOOL_SETTINGS.admission_fee_configs||{};
+  const fee=cfgs[cid]?parseFloat(cfgs[cid]):(parseFloat(SCHOOL_SETTINGS.admission_fee_default)||0);
+  window._currentAdmFee=fee;
+  const banner=document.getElementById('adm-fee-banner');
+  const disp=document.getElementById('adm-fee-display');
+  const conFee=document.getElementById('adm-consent-fee-val');
+  const payTotInt=document.getElementById('adm-pay-total-int');
+  const payTotPub=document.getElementById('adm-pay-total-pub');
+  const fmtFee='₦'+fee.toLocaleString();
+  if(banner){banner.style.display=fee>0?'block':'none';}
+  if(disp) disp.textContent=fmtFee;
+  if(conFee) conFee.textContent=fmtFee;
+  const noteEl=document.getElementById('adm-consent-fee-note');
+  if(noteEl) noteEl.style.display=fee>0?'block':'none';
+  if(payTotInt) payTotInt.textContent=fmtFee;
+  if(payTotPub) payTotPub.textContent=fmtFee;
+  calcAdmBalance();
+}
+
+function calcAdmBalance(){
+  const total=window._currentAdmFee||0;
+  const paid=parseFloat(document.getElementById('adm-amount')?.value)||0;
+  const bal=Math.max(0,total-paid);
+  const box=document.getElementById('adm-balance-box');
+  const valEl=document.getElementById('adm-balance-val');
+  if(box) box.style.display=paid>0&&bal>0?'block':'none';
+  if(valEl) valEl.textContent='₦'+bal.toLocaleString();
+}
+
+function showPubPayMethod(method){
+  ['paystack','transfer','cash'].forEach(m=>{
+    const panel=document.getElementById('pub-pay-panel-'+m);
+    const opt=document.getElementById('pub-pay-opt-'+m);
+    if(panel) panel.style.display=m===method?'block':'none';
+    if(opt) opt.style.borderColor=m===method?'var(--br)':'var(--crd)';
+  });
+  window._pubPayMethod=method;
+  const confirmFlag=document.getElementById('pub-pay-confirmed-flag');
+  if(confirmFlag) confirmFlag.style.display='block';
+}
+
+function initiatePaystack(){
+  const fee=window._currentAdmFee||0;
+  const email=document.getElementById('adm-eml')?.value.trim()||'admission@vis.edu';
+  const name=document.getElementById('adm-name')?.value.trim()||'Applicant';
+  if(!fee){toast('No admission fee set for this class.','error');return;}
+  const key=SCHOOL_SETTINGS.paystack_public_key||PS_PUBLIC_KEY;
+  if(!key||key.startsWith('pk_test_139')){
+    // Demo mode - simulate payment
+    toast('Demo: Paystack payment simulated!');
+    const paidBox=document.getElementById('paystack-paid-confirm');
+    if(paidBox) paidBox.style.display='block';
+    window._paystackRef='PST-DEMO-'+Date.now();
+    window._pubPaymentConfirmed=true;
+    return;
+  }
+  window._ensurePaystack=window._ensurePaystack||function(){return window._lazyLoad('https://js.paystack.co/v1/inline.js');};
+  window._ensurePaystack().then(()=>{
+    const handler=PaystackPop.setup({
+      key,email,amount:fee*100,currency:'NGN',
+      ref:'ADM-'+Date.now(),
+      metadata:{name,purpose:'Admission Fee'},
+      callback(resp){
+        window._paystackRef=resp.reference;
+        window._pubPaymentConfirmed=true;
+        const paidBox=document.getElementById('paystack-paid-confirm');
+        if(paidBox) paidBox.style.display='block';
+        toast('✅ Payment successful! Ref: '+resp.reference);
+      },
+      onClose(){toast('Payment cancelled.','error');}
+    });
+    handler.openIframe();
+  }).catch(()=>toast('Could not load Paystack. Check your internet connection.','error'));
 }
 
 // Admission form navigation
@@ -10827,19 +11250,17 @@ function admNext(current){
   if(current===0){const n=document.getElementById('adm-name')?.value.trim();const c=document.getElementById('adm-cls')?.value;if(!n||!c){toast('Full name and class are required.','error');return;}}
   if(current===4){const p=document.getElementById('adm-par')?.value.trim();const ph=document.getElementById('adm-phn')?.value.trim();if(!p||!ph){toast('Parent name and phone are required.','error');return;}}
   if(current===5){
-  // Payment required to proceed
-  const paySection=document.getElementById('adm-sec-5');
-  const payMethodEl=document.getElementById('adm-pay-method-pub');
-  if(isPublic && payMethodEl){
-    const method=payMethodEl.value;
-    if(!method){toast('Please select a payment method to proceed.','error');return;}
-    if(method==='cash'){
-      toast('Cash payment: Please come to the school to pay before your application can be completed.','error');
-      return;
-    }
+    const disc=document.getElementById('adm-consent-disc')?.checked;
+    const med=document.getElementById('adm-consent-med')?.checked;
+    if(!disc||!med){toast('Both consent checkboxes must be ticked to proceed.','error');return;}
   }
-}
+  // Sync fee to payment section on entering it
   const next=current+1;
+  const fee=window._currentAdmFee||0;
+  const ti=document.getElementById('adm-pay-total-int');
+  const tp=document.getElementById('adm-pay-total-pub');
+  if(ti) ti.textContent='₦'+fee.toLocaleString();
+  if(tp) tp.textContent='₦'+fee.toLocaleString();
   document.getElementById('adm-sec-'+current).style.display='none';
   document.getElementById('adm-sec-'+next).style.display='block';
   document.getElementById('adm-step-'+current).style.background='#16A34A';
@@ -10854,46 +11275,33 @@ function admPrev(current){
   document.getElementById('adm-step-'+prev).style.background='var(--br)';
   _admCurrent=prev;
 }
-function toggleStateField(country){
-  const wrap=document.getElementById('adm-state-wrap');
-  if(wrap) wrap.style.display=country==='Nigeria'?'block':'none';
-}
+function toggleStateField(country){const wrap=document.getElementById('adm-state-wrap');if(wrap)wrap.style.display=country==='Nigeria'?'block':'none';}
 function toggleSameAddr(checked){
   const wrap=document.getElementById('adm-res-addr-wrap');
-  if(wrap) wrap.style.display=checked?'none':'block';
-  if(checked){
-    const perm=document.getElementById('adm-perm-addr')?.value||'';
-    const res=document.getElementById('adm-res-addr');
-    if(res) res.value=perm;
-  }
+  if(wrap)wrap.style.display=checked?'none':'block';
+  if(checked){const perm=document.getElementById('adm-perm-addr')?.value||'';const res=document.getElementById('adm-res-addr');if(res)res.value=perm;}
 }
-function togglePrevSchool(val){
-  const d=document.getElementById('adm-prev-school-details');
-  if(d) d.style.display=(val&&val!=='nil')?'flex':'none';
-}
-function toggleHealthDesc(val){document.getElementById('adm-health-desc-wrap').style.display=val==='yes'?'block':'none';}
-function toggleDisabilityDesc(val){document.getElementById('adm-disability-desc-wrap').style.display=val==='yes'?'block':'none';}
+function togglePrevSchool(val){const d=document.getElementById('adm-prev-school-details');if(d)d.style.display=(val&&val!=='nil')?'flex':'none';}
+function toggleHealthDesc(val){const w=document.getElementById('adm-health-desc-wrap');if(w)w.style.display=val==='yes'?'block':'none';}
+function toggleDisabilityDesc(val){const w=document.getElementById('adm-disability-desc-wrap');if(w)w.style.display=val==='yes'?'block':'none';}
 
 async function lookupAptCode(code){
   const statusEl=document.getElementById('apt-code-status');
   const scoreEl=document.getElementById('adm-apt-score');
   if(!code||code.length<6){if(statusEl)statusEl.style.display='none';return;}
-  const{data:ac}=await DB().from('aptitude_codes').select('*,cbt_submissions(score,total_marks,percentage)').eq('code',code).single();
+  const{data:ac}=await DB().from('aptitude_codes').select('*').eq('code',code).single();
   if(!ac){if(statusEl){statusEl.style.display='block';statusEl.style.background='#FEE2E2';statusEl.style.color='#EF4444';statusEl.textContent='❌ Code not found.';}return;}
   if(ac.status==='used'){if(statusEl){statusEl.style.display='block';statusEl.style.background='#FEF3C7';statusEl.style.color='#D97706';statusEl.textContent='⚠️ Code already used.';}return;}
   if(statusEl){statusEl.style.display='block';statusEl.style.background='#DCFCE7';statusEl.style.color='#16A34A';statusEl.textContent='✅ Valid code — class: '+(ac.class_name||'—');}
-  // Find score
   const{data:sub}=await DB().from('cbt_submissions').select('percentage').eq('exam_id',ac.exam_id).order('submitted_at',{ascending:false}).limit(1);
   if(sub?.[0]?.percentage!=null&&scoreEl){scoreEl.value=sub[0].percentage;scoreEl.readOnly=true;scoreEl.style.background='#F0FFF4';}
 }
 
-async function submitInternalAdm(){
-  const name=document.getElementById('adm-name')?.value.trim()||'';
+function _buildAdmPayload(isPublic){
   const cls=document.getElementById('adm-cls')?.value||'';
-  if(!name||!cls){toast('Name and class are required.','error');return;}
-  const payload={
-    full_name:name,
-    class_applied:cls,
+  const name=document.getElementById('adm-name')?.value.trim()||'';
+  return{
+    full_name:name, class_applied:cls,
     cbt_number:document.getElementById('adm-aptcode')?.value.trim()||null,
     aptitude_code:document.getElementById('adm-aptcode')?.value.trim()||null,
     aptitude_score:parseFloat(document.getElementById('adm-apt-score')?.value)||null,
@@ -10928,34 +11336,68 @@ async function submitInternalAdm(){
     consent_discipline:document.getElementById('adm-consent-disc')?.checked||false,
     consent_medical:document.getElementById('adm-consent-med')?.checked||false,
     class_admitted:document.getElementById('adm-admitted-cls')?.value||cls,
-    amount_paid:parseFloat(document.getElementById('adm-amount')?.value)||0,
-    payment_method:document.getElementById('adm-pay-method')?.value||null,
-    balance_due_date:document.getElementById('adm-bal-date')?.value||null,
-    official_name:UP?.full_name||null,
-    status:'pending',payment_status:'unpaid'
+    admission_fee:window._currentAdmFee||0,
+    status:'pending',
   };
-  if(!navigator.onLine){await saveDraft('admission',payload);showOfflineBanner('Admission saved offline — will sync when connected.');closeModal();return;}
+}
+
+async function submitInternalAdm(){
+  const name=document.getElementById('adm-name')?.value.trim()||'';
+  const cls=document.getElementById('adm-cls')?.value||'';
+  if(!name||!cls){toast('Name and class are required.','error');return;}
+  const payload=_buildAdmPayload(false);
+  const amtPaid=parseFloat(document.getElementById('adm-amount')?.value)||0;
+  const totalFee=window._currentAdmFee||0;
+  payload.amount_paid=amtPaid;
+  payload.payment_method=document.getElementById('adm-pay-method')?.value||null;
+  payload.balance_due_date=document.getElementById('adm-bal-date')?.value||null;
+  payload.official_name=UP?.full_name||null;
+  payload.payment_status=amtPaid>=totalFee&&totalFee>0?'paid':amtPaid>0?'partial':'unpaid';
+  payload.confirmed_by=UP?.full_name||null;
+  if(!navigator.onLine){await saveDraft('admission',payload);showOfflineBanner('Admission saved offline.');closeModal();return;}
+  const btn=document.querySelector('#adm-sec-7 button.btn-primary');
+  if(btn){btn.innerHTML='<span class="spinner"></span> Submitting…';btn.disabled=true;}
   const{error}=await DB().from('admissions').insert(payload);
-  if(error){toast('Error: '+error.message,'error');return;}
-  // Fetch the newly inserted record
+  if(error){if(btn){btn.innerHTML='<i class="fas fa-check-circle"></i> Submit & Generate PDF';btn.disabled=false;}toast('Error: '+error.message,'error');return;}
   const{data:newAdm}=await DB().from('admissions').select('*').eq('full_name',payload.full_name).order('created_at',{ascending:false}).limit(1);
   const admRec=newAdm?.[0]||payload;
-  toast('✅ Admission submitted successfully!');
+  toast('✅ Admission submitted! Generating 3-page PDF…');
   closeModal();
-  await generateAdmissionPDF(admRec,true);
   renderAdmissions();
-  toast('✅ Admission submitted!');
-  closeModal();
-  // Auto email parent
+  await generateAdmissionPDF(admRec,false,true);
   if(payload.email){
-    sendEmailDelivery({
-      toEmail:payload.email,toName:payload.parent_name||'Parent/Guardian',
-      subject:`Admission Application — ${payload.full_name} | ${SCHOOL_SETTINGS?.school_name||'VIS'}`,
-      bodyHtml:`Dear ${payload.parent_name||'Parent/Guardian'},<br><br>Your admission application for <strong>${payload.full_name}</strong> into <strong>${payload.class_applied}</strong> has been received. The school will review and contact you soon.<br><br>${SCHOOL_SETTINGS?.school_name||'Victorious International Schools'}`,
-      fileRef:'admission_form',fileType:'admission'
-    });
+    try{await sendEmailDelivery({toEmail:payload.email,toName:payload.parent_name||'Parent/Guardian',subject:`Admission Application — ${payload.full_name} | ${SCHOOL_SETTINGS?.school_name||'VIS'}`,bodyHtml:`Dear ${payload.parent_name||'Parent/Guardian'},<br><br>Your admission application for <strong>${payload.full_name}</strong> into <strong>${payload.class_applied}</strong> has been received.<br><br>${SCHOOL_SETTINGS?.school_name||'Victorious International Schools'}`});}catch(e){}
   }
-  renderAdmissions();
+}
+
+async function submitPublicAdm(){
+  const name=document.getElementById('adm-name')?.value.trim()||'';
+  const cls=document.getElementById('adm-cls')?.value||'';
+  if(!name||!cls){toast('Name and class are required.','error');return;}
+  const method=window._pubPayMethod||'';
+  if(!method){toast('Please select a payment method.','error');return;}
+  const payload=_buildAdmPayload(true);
+  payload.amount_paid=0;
+  payload.payment_method=method;
+  payload.payment_status='pending_confirmation';
+  payload.paystack_ref=window._paystackRef||null;
+  payload.pub_payment_confirmed=method==='paystack'&&window._pubPaymentConfirmed?true:false;
+  if(!navigator.onLine){await saveDraft('admission',payload);showOfflineBanner('Admission saved offline.');closeModal();return;}
+  const btn=document.getElementById('pub-submit-btn');
+  if(btn){btn.innerHTML='<span class="spinner"></span> Submitting…';btn.disabled=true;}
+  const{error}=await DB().from('admissions').insert(payload);
+  if(error){if(btn){btn.innerHTML='<i class="fas fa-paper-plane"></i> Submit Application';btn.disabled=false;}toast('Error: '+error.message,'error');return;}
+  const{data:newAdm}=await DB().from('admissions').select('*').eq('full_name',payload.full_name).order('created_at',{ascending:false}).limit(1);
+  const admRec=newAdm?.[0]||payload;
+  toast('✅ Application submitted! Awaiting payment confirmation from admin.');
+  closeModal();
+  // For paystack confirmed, generate PDF immediately
+  if(method==='paystack'&&window._pubPaymentConfirmed){
+    await generateAdmissionPDF(admRec,true,false);
+  }
+  if(payload.email){
+    try{await sendEmailDelivery({toEmail:payload.email,toName:payload.parent_name||'Parent/Guardian',subject:`Admission Application Received — ${payload.full_name}`,bodyHtml:`Dear ${payload.parent_name||'Parent/Guardian'},<br><br>Your admission application for <strong>${payload.full_name}</strong> has been received.<br><br>${method==='paystack'?'Payment confirmed via Paystack.':'Our team will contact you to confirm your '+method+' payment.'}<br><br>${SCHOOL_SETTINGS?.school_name||'Victorious International Schools'}`});}catch(e){}
+  }
 }
 
 // Admission Letter PDF
@@ -11034,7 +11476,7 @@ async function renderCBTAccessCodesTab(){
     </div>
     <div class="card" style="overflow:hidden;">
       <div style="padding:14px 18px;border-bottom:1px solid var(--crd);font-weight:700;font-size:14px;color:var(--br);"><i class="fas fa-list"></i> All CBT Exam Access Codes</div>
-      <div style="overflow-x:auto;"><table class="tbl">
+      <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;"><table class="tbl" style="min-width:max-content;">
         <thead><tr><th>Exam</th><th>Class</th><th>Status</th><th>Access Code</th><th>Actions</th></tr></thead>
         <tbody>${(exams||[]).map(e=>`<tr>
           <td style="font-weight:600;color:var(--br);">${e.title}</td>
@@ -11214,7 +11656,7 @@ const _patchExamSubmit=async(examId,isAptitude,code,codeId)=>{
 // ═══════════════════════════════════════════════════════
 // ADMIN EMAIL DELIVERY LOG
 // ═══════════════════════════════════════════════════════
-async function generateAdmissionPDF(adm, isOnline=false){
+async function generateAdmissionPDF(adm, isOnline=false, showReceipt=false){
   await window._ensureJsPDF();const{jsPDF}=window.jspdf;
   const SS=SCHOOL_SETTINGS;
   const pdf=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
@@ -11458,8 +11900,118 @@ async function generateAdmissionPDF(adm, isOnline=false){
     pdf.text('OFFICIAL STAMP',W-66+52/2,y+3,{align:'center'});
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // PAGE 3 — PAYMENT RECEIPT (shown when showReceipt=true and there's a payment)
+  // ═══════════════════════════════════════════════════════════
+  const hasPayment=(adm.amount_paid&&adm.amount_paid>0)||(adm.admission_fee&&adm.admission_fee>0);
+  if(hasPayment){
+    y=await addLetterhead(pdf.getNumberOfPages()+1);
+    pdf.setFillColor(93,64,55);pdf.roundedRect(15,y,W-30,18,3,3,'F');
+    pdf.setFontSize(12);pdf.setFont('helvetica','bold');pdf.setTextColor(255,255,255);
+    pdf.text('PAYMENT RECEIPT',W/2,y+11,{align:'center'});
+    y+=24;
+
+    // Receipt details
+    const receiptNo='RCT/'+admNum.replace('/ADM','').replace('/','-').replace('/','').slice(-8)+'/'+new Date().getFullYear();
+    pdf.setFontSize(8.5);pdf.setFont('helvetica','bold');pdf.setTextColor(80,80,80);
+    pdf.text('Receipt No: '+receiptNo, 15, y);
+    pdf.text('Date: '+today, W-15, y,{align:'right'});
+    y+=8;
+
+    // Student info box
+    pdf.setFillColor(248,241,227);pdf.setDrawColor(200,180,160);pdf.roundedRect(15,y,W-30,22,3,3,'FD');
+    pdf.setFontSize(9);pdf.setFont('helvetica','bold');pdf.setTextColor(93,64,55);
+    pdf.text('RECEIVED FROM:', 20, y+7);
+    pdf.setFont('helvetica','normal');pdf.setTextColor(0,0,0);
+    pdf.text(adm.full_name||'—', 65, y+7);
+    pdf.setFont('helvetica','bold');pdf.setTextColor(93,64,55);
+    pdf.text('CLASS:', 20, y+14);
+    pdf.setFont('helvetica','normal');pdf.setTextColor(0,0,0);
+    pdf.text(adm.class_applied||'—', 65, y+14);
+    y+=28;
+
+    // Payment table
+    pdf.setFillColor(93,64,55);pdf.rect(15,y,W-30,9,'F');
+    pdf.setFont('helvetica','bold');pdf.setTextColor(255,255,255);pdf.setFontSize(8.5);
+    pdf.text('DESCRIPTION', 20, y+6);
+    pdf.text('AMOUNT', W-20, y+6,{align:'right'});
+    y+=9;
+
+    const fee=adm.admission_fee||0;
+    const paid=adm.amount_paid||0;
+    const bal=Math.max(0,fee-paid);
+
+    pdf.setFillColor(255,255,255);pdf.rect(15,y,W-30,10,'F');
+    pdf.setFont('helvetica','normal');pdf.setTextColor(0,0,0);pdf.setFontSize(9.5);
+    pdf.text('Admission Fee — '+( adm.class_admitted||adm.class_applied||''), 20, y+7);
+    pdf.text('₦'+fee.toLocaleString(), W-20, y+7,{align:'right'});
+    y+=10;
+
+    // Totals
+    pdf.setFillColor(240,240,240);pdf.rect(15,y,W-30,8,'F');
+    pdf.setFont('helvetica','bold');pdf.setFontSize(9);pdf.setTextColor(0,0,0);
+    pdf.text('Total Billed:', 20, y+5.5);
+    pdf.text('₦'+fee.toLocaleString(), W-20, y+5.5,{align:'right'});
+    y+=8;
+
+    pdf.setFillColor(220,252,231);pdf.rect(15,y,W-30,9,'F');
+    pdf.setFont('helvetica','bold');pdf.setTextColor(22,101,52);
+    pdf.text('Amount Paid:', 20, y+6);
+    pdf.text('₦'+paid.toLocaleString(), W-20, y+6,{align:'right'});
+    y+=9;
+
+    if(bal>0){
+      pdf.setFillColor(254,243,199);pdf.rect(15,y,W-30,9,'F');
+      pdf.setFont('helvetica','bold');pdf.setTextColor(180,83,9);
+      pdf.text('Balance Outstanding:', 20, y+6);
+      pdf.text('₦'+bal.toLocaleString(), W-20, y+6,{align:'right'});
+      y+=9;
+    }
+    y+=6;
+
+    // Payment method
+    pdf.setFont('helvetica','normal');pdf.setTextColor(80,80,80);pdf.setFontSize(9);
+    pdf.text('Payment Method: '+(adm.payment_method||'—'), 15, y);
+    if(adm.paystack_ref){y+=5;pdf.text('Transaction Ref: '+adm.paystack_ref, 15, y);}
+    y+=12;
+
+    // Confirmation note
+    if(adm.confirmed_by){
+      pdf.setFillColor(219,234,254);pdf.roundedRect(15,y,W-30,14,2,2,'F');
+      pdf.setFont('helvetica','italic');pdf.setTextColor(37,99,235);pdf.setFontSize(9);
+      pdf.text('Payment confirmed by: '+adm.confirmed_by+(adm.confirmed_at?' on '+new Date(adm.confirmed_at).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}):''), W/2, y+8,{align:'center'});
+      y+=20;
+    }
+
+    // Receipt signature
+    y+=6;
+    pdf.setDrawColor(150,150,150);pdf.setLineWidth(0.4);pdf.line(15,y,80,y);
+    if(admSigImg){try{const si=await loadImageForPDF(admSigImg);pdf.addImage(si,'PNG',15,y-12,40,11);}catch(e){}}
+    pdf.setFont('helvetica','bold');pdf.setTextColor(0,0,0);pdf.setFontSize(9);
+    pdf.text(admSigName,15,y+4);
+    pdf.setFont('helvetica','normal');pdf.setFontSize(7.5);pdf.setTextColor(80,80,80);
+    pdf.text(admSigRole+' · For: '+schoolName,15,y+9);
+    pdf.text(today,15,y+14);
+
+    // Stamp on receipt
+    if(admStampImg){
+      try{const si=await loadImageForPDF(admStampImg);pdf.addImage(si,'PNG',W-62,y-6,42,30);}catch(e){
+        pdf.setDrawColor(170,170,170);pdf.setLineWidth(0.3);pdf.setLineDashPattern([2,2],0);
+        pdf.rect(W-66,y-8,52,28);pdf.setLineDashPattern([],0);
+      }
+    } else {
+      pdf.setDrawColor(170,170,170);pdf.setLineWidth(0.3);pdf.setLineDashPattern([2,2],0);
+      pdf.rect(W-66,y-8,52,28);pdf.setLineDashPattern([],0);
+      pdf.setFontSize(7);pdf.setTextColor(160,160,160);
+      pdf.text('OFFICIAL STAMP',W-66+52/2,y+3,{align:'center'});
+    }
+    y+=28;
+    pdf.setFontSize(7);pdf.setTextColor(150,150,150);
+    pdf.text('This is a computer-generated receipt. Keep for your records.',W/2,y+5,{align:'center'});
+  }
+
   pdf.save('Admission_'+((adm.full_name||'student').replace(/\s+/g,'_'))+'_'+admNum+'.pdf');
-  toast('✅ Admission PDF generated!');
+  toast('✅ 3-page Admission PDF generated!');
 }
 async function loadImageForPDF(url){
   return new Promise((res,rej)=>{
@@ -11468,6 +12020,270 @@ async function loadImageForPDF(url){
     img.onerror=rej;img.src=url;
   });
                                                                         }
+
+// ════════════════════════════════════════════════════
+// FEE RECEIPTS — Director, Admin, Super Admin, Bursar
+// ════════════════════════════════════════════════════
+async function renderFeeReceipts(){
+  setPage('Fee Receipts','All fee payments across classes, sessions and terms');
+  const allowed=['super_admin','admin','proprietor','bursar','cashier'];
+  if(!allowed.includes(ROLE)){setContent('<div class="card" style="padding:32px;text-align:center;color:#EF4444;">Access denied.</div>');return;}
+  const[{data:classes},{data:sessions_raw}]=await Promise.all([
+    DB().from('classes').select('id,name,arm').order('name'),
+    DB().from('school_settings').select('current_session,current_term').eq('id',1)
+  ]);
+  const ss=sessions_raw?.[0]||SCHOOL_SETTINGS;
+  setContent(`<div style="display:flex;flex-direction:column;gap:18px;">
+    <div class="card" style="padding:18px;">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+        <select id="fr-cls" class="input" style="max-width:185px;" onchange="loadFeeReceipts()">
+          <option value="">All Classes</option>
+          ${(classes||[]).map(cl=>`<option value="${cl.id}">${cl.name}${cl.arm?' '+cl.arm:''}</option>`).join('')}
+        </select>
+        <input id="fr-session" class="input" style="max-width:140px;" placeholder="Session e.g. 2024/2025" value="${ss.current_session||''}">
+        <select id="fr-term" class="input" style="max-width:145px;">
+          <option value="">All Terms</option>
+          <option value="1st Term" ${ss.current_term==='1st Term'?'selected':''}>1st Term</option>
+          <option value="2nd Term" ${ss.current_term==='2nd Term'?'selected':''}>2nd Term</option>
+          <option value="3rd Term" ${ss.current_term==='3rd Term'?'selected':''}>3rd Term</option>
+        </select>
+        <button onclick="loadFeeReceipts()" class="btn btn-primary btn-sm"><i class="fas fa-search"></i> Load</button>
+      </div>
+    </div>
+    <div id="fr-results"><div style="text-align:center;padding:40px;color:var(--brl);">Select filters and click Load.</div></div>
+  </div>`);
+}
+async function loadFeeReceipts(){
+  const clsId=document.getElementById('fr-cls')?.value||'';
+  const session=document.getElementById('fr-session')?.value.trim()||'';
+  const term=document.getElementById('fr-term')?.value||'';
+  const res=document.getElementById('fr-results');
+  if(res) res.innerHTML='<div style="text-align:center;padding:30px;"><i class="fas fa-spinner fa-spin fa-2x" style="color:var(--brl);"></i></div>';
+
+  // Load students in class
+  let q=DB().from('students').select('id,full_name,admission_number,class_id,class_name');
+  if(clsId) q=q.eq('class_id',clsId);
+  const{data:students}=await q.order('full_name');
+
+  // Load fee assignments (invoices) and payments
+  let faq=DB().from('fee_assignments').select('*');
+  if(clsId) faq=faq.eq('class_id',clsId);
+  if(session) faq=faq.eq('session',session);
+  if(term) faq=faq.eq('term',term);
+  const{data:assignments}=await faq;
+
+  let fpq=DB().from('fee_payments').select('*');
+  if(session) fpq=fpq.eq('session',session);
+  if(term) fpq=fpq.eq('term',term);
+  const{data:payments}=await fpq;
+
+  const stuIds=new Set((students||[]).map(s=>s.id));
+
+  // Build per-student summary
+  const rows=(students||[]).map(s=>{
+    const stuAssign=(assignments||[]).filter(a=>a.student_id===s.id);
+    const stuPaid=(payments||[]).filter(p=>p.student_id===s.id);
+    const totalInvoice=stuAssign.reduce((sum,a)=>sum+(parseFloat(a.amount)||0),0);
+    const totalPaid=stuPaid.reduce((sum,p)=>sum+(parseFloat(p.amount_paid)||0),0);
+    return{s,totalInvoice,totalPaid,stuAssign,stuPaid};
+  });
+
+  const grandInvoice=rows.reduce((sum,r)=>sum+r.totalInvoice,0);
+  const grandPaid=rows.reduce((sum,r)=>sum+r.totalPaid,0);
+
+  if(res) res.innerHTML=`
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:13px;margin-bottom:16px;">
+    ${sc('Students',(students||[]).length,'fa-users','#5D4037','#F5EDE3')}
+    ${sc('Total Invoice','₦'+grandInvoice.toLocaleString(),'fa-file-invoice','#2563EB','#DBEAFE')}
+    ${sc('Total Paid','₦'+grandPaid.toLocaleString(),'fa-check-circle','#16A34A','#DCFCE7')}
+    ${sc('Balance','₦'+(grandInvoice-grandPaid).toLocaleString(),'fa-balance-scale','#D97706','#FEF3C7')}
+  </div>
+  <div class="card" style="overflow:hidden;">
+    <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;">
+    <table class="tbl" style="min-width:780px;">
+      <thead><tr>
+        <th>Name</th><th>Adm No</th><th>Class</th>
+        <th>Total Invoice</th><th>Total Paid</th><th>Balance</th>
+        <th style="min-width:170px;">Actions</th>
+      </tr></thead>
+      <tbody>${rows.map(({s,totalInvoice,totalPaid,stuAssign,stuPaid})=>{
+        const bal=totalInvoice-totalPaid;
+        return`<tr>
+          <td style="font-weight:600;">${s.full_name}</td>
+          <td style="color:var(--brl);">${s.admission_number||'—'}</td>
+          <td><span class="badge bn">${s.class_name||'—'}</span></td>
+          <td style="font-weight:700;color:#2563EB;">₦${totalInvoice.toLocaleString()}</td>
+          <td style="font-weight:700;color:#16A34A;">₦${totalPaid.toLocaleString()}</td>
+          <td style="font-weight:700;color:${bal>0?'#D97706':'#16A34A'};">₦${bal.toLocaleString()}</td>
+          <td>
+            <div style="display:flex;gap:5px;">
+              <button onclick="generateStudentInvoicePDF('${s.id}','${s.full_name.replace(/'/g,'&#39;')}','${session}','${term}')" class="btn btn-sm" style="background:#DBEAFE;color:#2563EB;padding:5px 9px;" title="Invoice PDF"><i class="fas fa-file-invoice"></i> Invoice</button>
+              <button onclick="generateStudentReceiptPDF('${s.id}','${s.full_name.replace(/'/g,'&#39;')}','${session}','${term}')" class="btn btn-sm" style="background:#DCFCE7;color:#16A34A;padding:5px 9px;" title="Receipt PDF"><i class="fas fa-receipt"></i> Receipt</button>
+            </div>
+          </td>
+        </tr>`;
+      }).join('')||'<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--brl);">No students found.</td></tr>'}
+      </tbody>
+    </table></div>
+  </div>`;
+}
+
+async function generateStudentInvoicePDF(studentId,studentName,session,term){
+  await window._ensureJsPDF();const{jsPDF}=window.jspdf;
+  const SS=SCHOOL_SETTINGS;
+  const{data:assignments}=await DB().from('fee_assignments').select('*').eq('student_id',studentId);
+  const{data:stu}=await DB().from('students').select('*').eq('id',studentId).single();
+  const filtered=(assignments||[]).filter(a=>(!session||a.session===session)&&(!term||a.term===term));
+  const pdf=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
+  const W=210;let y=10;
+  // Header
+  pdf.setFillColor(93,64,55);pdf.rect(0,0,W,28,'F');
+  if(SS.logo_url){try{const img=await loadImageForPDF(SS.logo_url);pdf.addImage(img,'JPEG',8,4,20,20);}catch(e){}}
+  pdf.setTextColor(255,255,255);pdf.setFontSize(13);pdf.setFont('helvetica','bold');
+  pdf.text((SS.school_name||'School').toUpperCase(),W/2,10,{align:'center'});
+  pdf.setFontSize(7.5);pdf.setFont('helvetica','normal');
+  pdf.text(SS.address||'',W/2,16,{align:'center'});
+  pdf.text((SS.phone1||'')+(SS.email?' | '+SS.email:''),W/2,21,{align:'center'});
+  y=34;
+  pdf.setTextColor(0,0,0);pdf.setFontSize(13);pdf.setFont('helvetica','bold');
+  pdf.text('FEE INVOICE',W/2,y,{align:'center'});
+  pdf.setDrawColor(93,64,55);pdf.setLineWidth(0.5);pdf.line(15,y+3,W-15,y+3);y+=10;
+  pdf.setFontSize(9);pdf.setFont('helvetica','normal');
+  pdf.text('Student: '+studentName,15,y);pdf.text('Adm No: '+(stu?.admission_number||'—'),W/2,y);y+=6;
+  pdf.text('Class: '+(stu?.class_name||'—'),15,y);pdf.text('Session: '+(session||'—')+' | Term: '+(term||'—'),W/2,y);y+=10;
+  // Table
+  pdf.setFillColor(93,64,55);pdf.rect(15,y,W-30,9,'F');
+  pdf.setTextColor(255,255,255);pdf.setFont('helvetica','bold');pdf.setFontSize(9);
+  pdf.text('Fee Description',20,y+6);pdf.text('Amount (₦)',W-20,y+6,{align:'right'});y+=9;
+  let total=0;
+  (filtered.length?filtered:[{fee_name:'No fees assigned',amount:0}]).forEach((fa,i)=>{
+    pdf.setFillColor(i%2===0?255:248,i%2===0?255:248,i%2===0?255:248);
+    pdf.rect(15,y,W-30,9,'F');
+    pdf.setTextColor(0,0,0);pdf.setFont('helvetica','normal');pdf.setFontSize(9);
+    pdf.text(fa.fee_name||fa.description||'Fee',20,y+6);
+    pdf.text((parseFloat(fa.amount)||0).toLocaleString(),W-20,y+6,{align:'right'});
+    total+=parseFloat(fa.amount)||0;y+=9;
+  });
+  pdf.setFillColor(93,64,55);pdf.rect(15,y,W-30,10,'F');
+  pdf.setTextColor(255,255,255);pdf.setFont('helvetica','bold');pdf.setFontSize(10);
+  pdf.text('TOTAL',20,y+7);pdf.text('₦'+total.toLocaleString(),W-20,y+7,{align:'right'});y+=18;
+  // Sig
+  const sigName=SS.finance_signatory_name||SS.school_director_name||'School Director';
+  const sigRole=SS.finance_signatory_role||'School Director';
+  pdf.setDrawColor(150,150,150);pdf.setLineWidth(0.4);pdf.line(15,y,75,y);
+  pdf.setFont('helvetica','bold');pdf.setTextColor(0,0,0);pdf.setFontSize(9);
+  pdf.text(sigName,15,y+5);pdf.setFont('helvetica','normal');pdf.setFontSize(8);pdf.setTextColor(80,80,80);
+  pdf.text(sigRole+' — '+new Date().toLocaleDateString('en-GB'),15,y+10);
+  pdf.save('Invoice_'+studentName.replace(/\s+/g,'_')+'_'+(term||'').replace(/\s+/g,'')+'_'+(session||'')+'.pdf');
+  toast('✅ Invoice PDF generated!');
+}
+
+async function generateStudentReceiptPDF(studentId,studentName,session,term){
+  await window._ensureJsPDF();const{jsPDF}=window.jspdf;
+  const SS=SCHOOL_SETTINGS;
+  const{data:payments}=await DB().from('fee_payments').select('*').eq('student_id',studentId);
+  const{data:stu}=await DB().from('students').select('*').eq('id',studentId).single();
+  const filtered=(payments||[]).filter(p=>(!session||p.session===session)&&(!term||p.term===term));
+  const pdf=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
+  const W=210;let y=10;
+  pdf.setFillColor(93,64,55);pdf.rect(0,0,W,28,'F');
+  if(SS.logo_url){try{const img=await loadImageForPDF(SS.logo_url);pdf.addImage(img,'JPEG',8,4,20,20);}catch(e){}}
+  pdf.setTextColor(255,255,255);pdf.setFontSize(13);pdf.setFont('helvetica','bold');
+  pdf.text((SS.school_name||'School').toUpperCase(),W/2,10,{align:'center'});
+  pdf.setFontSize(7.5);pdf.setFont('helvetica','normal');
+  pdf.text(SS.address||'',W/2,16,{align:'center'});
+  pdf.text((SS.phone1||'')+(SS.email?' | '+SS.email:''),W/2,21,{align:'center'});
+  y=34;
+  pdf.setTextColor(0,0,0);pdf.setFontSize(13);pdf.setFont('helvetica','bold');
+  pdf.text('PAYMENT RECEIPT',W/2,y,{align:'center'});
+  pdf.setDrawColor(93,64,55);pdf.setLineWidth(0.5);pdf.line(15,y+3,W-15,y+3);y+=10;
+  pdf.setFontSize(9);pdf.setFont('helvetica','normal');
+  pdf.text('Student: '+studentName,15,y);pdf.text('Adm No: '+(stu?.admission_number||'—'),W/2,y);y+=6;
+  pdf.text('Class: '+(stu?.class_name||'—'),15,y);pdf.text('Session: '+(session||'—')+' | Term: '+(term||'—'),W/2,y);y+=10;
+  pdf.setFillColor(93,64,55);pdf.rect(15,y,W-30,9,'F');
+  pdf.setTextColor(255,255,255);pdf.setFont('helvetica','bold');pdf.setFontSize(9);
+  pdf.text('Description',20,y+6);pdf.text('Date',100,y+6);pdf.text('Method',140,y+6);pdf.text('Amount (₦)',W-20,y+6,{align:'right'});y+=9;
+  let total=0;
+  (filtered.length?filtered:[{description:'No payments recorded',amount_paid:0,paid_at:'',payment_method:''}]).forEach((fp,i)=>{
+    pdf.setFillColor(i%2===0?255:248,i%2===0?255:248,i%2===0?255:248);
+    pdf.rect(15,y,W-30,9,'F');
+    pdf.setTextColor(0,0,0);pdf.setFont('helvetica','normal');pdf.setFontSize(8.5);
+    pdf.text((fp.description||fp.fee_name||'Payment').substring(0,28),20,y+6);
+    pdf.text(fp.paid_at?new Date(fp.paid_at).toLocaleDateString('en-GB'):'—',100,y+6);
+    pdf.text(fp.payment_method||'—',140,y+6);
+    pdf.text((parseFloat(fp.amount_paid)||0).toLocaleString(),W-20,y+6,{align:'right'});
+    total+=parseFloat(fp.amount_paid)||0;y+=9;
+  });
+  pdf.setFillColor(22,163,74);pdf.rect(15,y,W-30,10,'F');
+  pdf.setTextColor(255,255,255);pdf.setFont('helvetica','bold');pdf.setFontSize(10);
+  pdf.text('TOTAL PAID',20,y+7);pdf.text('₦'+total.toLocaleString(),W-20,y+7,{align:'right'});y+=18;
+  const sigName=SS.finance_signatory_name||SS.school_director_name||'School Director';
+  const sigRole=SS.finance_signatory_role||'School Director';
+  pdf.setDrawColor(150,150,150);pdf.setLineWidth(0.4);pdf.line(15,y,75,y);
+  pdf.setFont('helvetica','bold');pdf.setTextColor(0,0,0);pdf.setFontSize(9);
+  pdf.text(sigName,15,y+5);pdf.setFont('helvetica','normal');pdf.setFontSize(8);pdf.setTextColor(80,80,80);
+  pdf.text(sigRole+' — '+new Date().toLocaleDateString('en-GB'),15,y+10);
+  pdf.save('Receipt_'+studentName.replace(/\s+/g,'_')+'_'+(term||'').replace(/\s+/g,'')+'_'+(session||'')+'.pdf');
+  toast('✅ Receipt PDF generated!');
+}
+
+// ════════════════════════════════════════════════════
+// SCHOLARSHIP DASHBOARD — Director, Admin, Super Admin, Bursar
+// ════════════════════════════════════════════════════
+async function renderScholarship(){
+  setPage('Scholarship Students','All students/pupils on scholarship');
+  const allowed=['super_admin','admin','proprietor','bursar','cashier'];
+  if(!allowed.includes(ROLE)){setContent('<div class="card" style="padding:32px;text-align:center;color:#EF4444;">Access denied.</div>');return;}
+  const{data:classes}=await DB().from('classes').select('id,name,arm').order('name');
+  setContent(`<div style="display:flex;flex-direction:column;gap:18px;">
+    <div class="card" style="padding:18px;">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+        <select id="sc-cls" class="input" style="max-width:200px;" onchange="loadScholarshipList()">
+          <option value="">All Classes</option>
+          ${(classes||[]).map(cl=>`<option value="${cl.id}">${cl.name}${cl.arm?' '+cl.arm:''}</option>`).join('')}
+        </select>
+        <button onclick="loadScholarshipList()" class="btn btn-primary btn-sm"><i class="fas fa-search"></i> View All</button>
+      </div>
+    </div>
+    <div id="sc-results"></div>
+  </div>`);
+  loadScholarshipList();
+}
+async function loadScholarshipList(){
+  const clsId=document.getElementById('sc-cls')?.value||'';
+  const res=document.getElementById('sc-results');
+  if(res) res.innerHTML='<div style="text-align:center;padding:30px;"><i class="fas fa-spinner fa-spin fa-2x" style="color:var(--brl);"></i></div>';
+  let q=DB().from('students').select('*').eq('scholarship',true).order('full_name');
+  if(clsId) q=q.eq('class_id',clsId);
+  const{data:students}=await q;
+  if(res) res.innerHTML=`<div class="card" style="overflow:hidden;">
+    <div style="padding:12px 18px;border-bottom:1px solid var(--crd);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+      <span style="font-weight:700;color:var(--br);font-size:14px;"><i class="fas fa-award" style="color:#7C3AED;"></i> ${(students||[]).length} Scholarship Student${(students||[]).length!==1?'s':''}</span>
+      <input class="input" placeholder="🔍 Search…" style="max-width:200px;" oninput="filterTbl(this,'sc-tb')">
+    </div>
+    <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;">
+    <table class="tbl" style="min-width:580px;"><thead><tr>
+      <th>Name</th><th>Adm No</th><th>Class</th><th>Year Added</th><th>Actions</th>
+    </tr></thead>
+    <tbody id="sc-tb">${(students||[]).map(s=>`<tr>
+      <td style="font-weight:700;"><i class="fas fa-award" style="color:#7C3AED;margin-right:5px;"></i>${s.full_name}</td>
+      <td style="color:var(--brl);">${s.admission_number||'—'}</td>
+      <td><span class="badge bn">${s.class_name||'—'}</span></td>
+      <td style="color:var(--brl);">${s.class_join_year||new Date(s.created_at||Date.now()).getFullYear()}</td>
+      <td>
+        <button onclick="removeScholarship('${s.id}','${(s.full_name||'').replace(/'/g,'&#39;')}')" class="btn btn-sm" style="background:#FEE2E2;color:#EF4444;padding:5px 11px;"><i class="fas fa-times"></i> Remove</button>
+        <button onclick="editStudent('${s.id}')" class="btn btn-sm btn-ghost" style="padding:5px 9px;" title="Edit"><i class="fas fa-edit"></i></button>
+      </td>
+    </tr>`).join('')||'<tr><td colspan="5" style="text-align:center;padding:28px;color:var(--brl);"><i class="fas fa-award" style="color:#7C3AED;margin-right:6px;"></i>No scholarship students found.</td></tr>'}
+    </tbody></table></div></div>`;
+}
+async function removeScholarship(id,name){
+  if(!confirm('Remove scholarship from '+name+'?')) return;
+  await DB().from('students').update({scholarship:false}).eq('id',id);
+  toast('Scholarship removed from '+name+'.');
+  loadScholarshipList();
+}
+
 async function renderEmailLog(){
   setPage('Email Delivery Log','Status of auto-sent emails');
   const{data:logs}=await DB().from('email_delivery_log').select('*').order('created_at',{ascending:false}).limit(100);
@@ -11477,7 +12293,7 @@ async function renderEmailLog(){
         <div style="font-weight:700;font-size:14px;color:var(--br);">Email Delivery Log</div>
         <button onclick="renderEmailLog()" class="btn btn-sm btn-outline"><i class="fas fa-sync"></i> Refresh</button>
       </div>
-      <div style="overflow-x:auto;"><table class="tbl">
+      <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;"><table class="tbl" style="min-width:max-content;">
         <thead><tr><th>Recipient</th><th>Subject</th><th>Type</th><th>Status</th><th>Date</th><th>Action</th></tr></thead>
         <tbody>${(logs||[]).map(l=>`<tr>
           <td><div style="font-weight:600;">${l.recipient_name||'—'}</div><div style="font-size:11px;color:var(--brl);">${l.recipient_email}</div></td>
@@ -11515,7 +12331,7 @@ async function renderEmailCenter(){
           <button onclick="showComposeEmailModal()" class="btn btn-primary btn-sm"><i class="fas fa-pen"></i> Compose</button>
         </div>
       </div>
-      ${(logs&&logs.length)?`<div style="overflow-x:auto;"><table class="tbl">
+      ${(logs&&logs.length)?`<div style="overflow-x:auto;-webkit-overflow-scrolling:touch;"><table class="tbl" style="min-width:max-content;">
         <thead><tr><th>To</th><th>Name</th><th>Subject</th><th>Status</th><th>Date</th><th>Actions</th></tr></thead>
         <tbody>${logs.map(l=>`<tr>
           <td style="color:var(--brl);font-size:12.5px;">${l.recipient_email||'—'}</td>
@@ -12765,7 +13581,7 @@ async function hubStudents(){
           ${canAdd?`<button onclick="showAddStudentModal()" class="btn btn-primary btn-sm"><i class="fas fa-user-plus"></i> Add ${pupilOrStudent(_hubCname)}</button>`:''}
         </div>
       </div>
-      <div style="overflow-x:auto;"><table class="tbl">
+      <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;"><table class="tbl" style="min-width:max-content;">
         <thead><tr><th>Adm No</th><th>Full Name</th><th>Gender</th><th>Parent</th><th>Status</th><th>Actions</th></tr></thead>
         <tbody id="hub-stu-tb">
           ${(students||[]).map(s=>`<tr>
@@ -13095,7 +13911,7 @@ async function hubLoadScoreEntry(){
         <div style="font-weight:700;color:var(--br);">${subj} — ${term} · ${sess}</div>
         <button onclick="hubSaveScores('${subj}','${term}','${sess}')" class="btn btn-primary btn-sm"><i class="fas fa-save"></i> Save All Scores</button>
       </div>
-      <div style="overflow-x:auto;"><table class="tbl">
+      <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;"><table class="tbl" style="min-width:max-content;">
         <thead><tr><th>#</th><th>Student</th><th>Adm No</th>
           <th style="text-align:center;background:#F0EBE3;width:88px;">CA (0–30)</th>
           <th style="text-align:center;background:#F0EBE3;width:88px;">Exam (0–70)</th>
@@ -13202,7 +14018,7 @@ async function hubLoadSSPreview(){
         <div style="font-size:8.5px;opacity:.8;font-style:italic;margin-top:2px;">${SCHOOL_SETTINGS.motto}</div>
         <div style="font-size:11.5px;font-weight:700;margin-top:5px;letter-spacing:.04em;">SCORE SHEET — ${subj.toUpperCase()} — ${_hubCname.toUpperCase()} — ${term.toUpperCase()}, ${sess}</div>
       </div>
-      <div style="overflow-x:auto;"><table class="tbl">
+      <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;"><table class="tbl" style="min-width:max-content;">
         <thead><tr><th>#</th><th>Student</th><th>Adm No</th><th>CA (30)</th><th>Exam (70)</th><th>Total</th><th>Grade</th><th>Remark</th></tr></thead>
         <tbody>${rows.map(r=>`<tr>
           <td style="color:var(--brl);">${r.i}</td>
@@ -13337,7 +14153,7 @@ async function hubAffectiveTraits(){
       <div style="font-size:11.5px;color:var(--brl);"><i class="fas fa-info-circle"></i> Generated from each student's average score. Override per student with custom ratings.</div>
     </div>
     <div class="card" style="overflow:hidden;">
-      <div style="overflow-x:auto;"><table class="tbl">
+      <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;"><table class="tbl" style="min-width:max-content;">
         <thead><tr><th>#</th><th>Student</th><th>Status</th><th>Sample Traits</th><th>Action</th></tr></thead>
         <tbody>${(students||[]).map((s,i)=>{
           const ex=exMap[s.id];const has=ex&&ex.traits?.length;
@@ -13445,7 +14261,7 @@ async function hubLoadPublishList(){
           <button onclick="hubPublishAll('${term}','${sess}',false)" class="btn btn-sm btn-danger"><i class="fas fa-eye-slash"></i> Unpublish All</button>
         </div>
       </div>
-      <div style="overflow-x:auto;"><table class="tbl">
+      <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;"><table class="tbl" style="min-width:max-content;">
         <thead><tr><th>#</th><th>Student</th><th>Adm No</th><th>Has Results</th><th>Status</th><th>Action</th></tr></thead>
         <tbody>${(students||[]).map((s,i)=>{
           const has=hasRes.has(s.id);const pub=pubMap[s.id]===true;
@@ -13496,7 +14312,7 @@ async function hubPins(){
       </div>
     </div>
     <div class="card" style="overflow:hidden;">
-      <div style="overflow-x:auto;"><table class="tbl">
+      <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;"><table class="tbl" style="min-width:max-content;">
         <thead><tr><th>#</th><th>Student</th><th>Adm No</th><th>PIN (12 chars)</th><th>Status</th><th>Actions</th></tr></thead>
         <tbody>${(students||[]).map((s,i)=>{
           const p=pinMap[s.id];
@@ -13585,7 +14401,7 @@ async function hubClearance(){
           <button onclick="hubClearAllStudents(false)" class="btn btn-sm btn-danger"><i class="fas fa-times"></i> Unclear All</button>
         </div>
       </div>
-      <div style="overflow-x:auto;"><table class="tbl">
+      <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;"><table class="tbl" style="min-width:max-content;">
         <thead><tr><th>#</th><th>Student</th><th>Adm No</th><th>Clearance</th><th>Action</th></tr></thead>
         <tbody>${(students||[]).map((s,i)=>`<tr>
           <td style="color:var(--brl);">${i+1}</td>
